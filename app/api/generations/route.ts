@@ -37,7 +37,7 @@ export async function GET(req: Request) {
     return json({ error: `Could not load generations: ${error.message}` }, 500);
   }
 
-  return json({ runs: (data as GenerationRow[]).map(toGeneration), balance: await balanceOf(userId) });
+  return json({ runs: (data as GenerationRow[]).map(toGeneration), balance: await balanceOf(userId), swept: sweep.data ?? 0 });
 }
 
 /** Start a run of 1-4 outputs. Intent and cost are computed here from the prompt + re-validated overrides. */
@@ -60,6 +60,7 @@ export async function POST(req: Request) {
   const cost = estimateCost(intent);
 
   // Holds credits for every output in one transaction: all rows are created, or none.
+  const rpcStart = performance.now();
   const { data, error } = await admin.rpc("start_generation", { p_user: userId, p_intents: items, p_cost: estimateCost(items[0]) });
   if (error) {
     if (error.message.includes("insufficient_credits")) {
@@ -73,5 +74,7 @@ export async function POST(req: Request) {
   const rows = (data as GenerationRow[]).sort((a, b) => a.batch_index - b.batch_index);
   // ponytail: one provider call per output, in parallel; the HF client returns only the first image of a batched call
   after(() => Promise.all(rows.map(runGeneration)));
-  return json({ generations: rows.map(toGeneration), balance: await balanceOf(userId) }, 201);
+  // Round trip of the locking RPC as seen from this server; surfaced in the client's dev console.
+  const timing = { startGenerationMs: Math.round(performance.now() - rpcStart) };
+  return json({ generations: rows.map(toGeneration), balance: await balanceOf(userId), timing }, 201);
 }

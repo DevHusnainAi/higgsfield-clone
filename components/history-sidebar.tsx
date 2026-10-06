@@ -1,7 +1,8 @@
 "use client";
 
 import { useRef, type ComponentType, type ReactNode } from "react";
-import { FilmStrip, Heart, ImageSquare, List, Plus, Sparkle, SquaresFour, X, type IconProps } from "@phosphor-icons/react";
+import { FilmStrip, Heart, ImageSquare, List, Plus, Sparkle, SquaresFour, Terminal, X, type IconProps } from "@phosphor-icons/react";
+import { setDevConsole, useDevConsoleOpen } from "@/lib/dev-log";
 import { matchesFilter, select, setView, useStudio, type LibraryFilter, type View } from "@/lib/store";
 
 const LIBRARY: { filter: LibraryFilter; label: string; icon: ComponentType<IconProps> }[] = [
@@ -48,6 +49,7 @@ function NavItem({
 /** Shared by the desktop sidebar and the mobile drawer. `onNavigate` closes the drawer. */
 function SidebarBody({ onNavigate, onClose }: { onNavigate?: () => void; onClose?: () => void }) {
   const { runs, favorites, view, sessionStart, balance } = useStudio();
+  const devConsole = useDevConsoleOpen();
   const running = runs.filter((g) => g.status === "queued" || g.status === "generating").length;
   const go = (fn: () => void) => () => {
     fn();
@@ -113,7 +115,19 @@ function SidebarBody({ onNavigate, onClose }: { onNavigate?: () => void; onClose
       </nav>
 
       <div className="m-3 rounded-xl border border-line bg-surface-raised p-3 inset-shadow-edge">
-        <h2 className="pb-2 text-xs font-medium text-fg-muted">Credits</h2>
+        <div className="flex items-center justify-between pb-2">
+          <h2 className="text-xs font-medium text-fg-muted">Credits</h2>
+          <button
+            type="button"
+            onClick={() => setDevConsole(!devConsole)}
+            aria-pressed={devConsole}
+            aria-label="Dev console"
+            title="Dev console: live pipeline events"
+            className="-my-1 grid size-6 place-items-center rounded-md text-fg-muted transition hover:bg-fg/[0.06] hover:text-fg aria-pressed:bg-accent/15 aria-pressed:text-accent-text"
+          >
+            <Terminal size={13} />
+          </button>
+        </div>
         <dl className="grid grid-cols-[1fr_auto] gap-y-1 text-sm">
           {balance !== null && (
             <>

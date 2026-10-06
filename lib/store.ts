@@ -4,6 +4,7 @@
 import { useSyncExternalStore } from "react";
 import { estimateCost, simulateGeneration, splitBatch, transition, type Generation } from "./generation.ts";
 import { OVERRIDE_KEYS, type Intent } from "./intent.ts";
+import { devLog } from "./dev-log.ts";
 import { api, remoteEnabled, SyncError } from "./remote.ts";
 
 const KEY = remoteEnabled ? "studio.remote-cache.v1" : "studio.history.v1";
@@ -30,10 +31,12 @@ export interface StudioState {
   notice: string | null;
   /** Why syncing with the server is failing, if it is. History stays readable from the cache. */
   syncIssue: string | null;
+  /** A start request in flight: parsed, waiting on the server to lock credits and create the rows. */
+  pending: Intent | null;
 }
 
 const EMPTY: StudioState = {
-  runs: [], favorites: [], selectedId: null, view: "create", sessionStart: 0, balance: null, notice: null, syncIssue: null,
+  runs: [], favorites: [], selectedId: null, view: "create", sessionStart: 0, balance: null, notice: null, syncIssue: null, pending: null,
 };
 let state: StudioState | null = null;
 const listeners = new Set<() => void>();
@@ -84,7 +87,37 @@ function persist(key: string, value: unknown) {
   }
 }
 
+const SIM = remoteEnabled ? "" : "[simulated] ";
+
+/** What a run's state means, in pipeline terms. Progress 0.9 is the server's "provider returned, uploading" mark. */
+function describe(g: Generation): string {
+  switch (g.status) {
+    case "queued":
+      return `queued: ${g.credits.amount} credits held, awaiting GPU`;
+    case "generating":
+      return g.progress >= 0.9 ? "provider returned; uploading result and settling" : "provider call in flight";
+    case "done":
+      return g.demoFallback
+        ? `demo fallback triggered (provider 402): stock asset saved, ${g.credits.amount} credits refunded`
+        : `done: ${g.credits.amount} credits charged`;
+    case "failed":
+      return `failed (${g.reason}): ${g.credits.amount} credits refunded`;
+  }
+}
+
+/** Logs each run whose meaning changed (new active runs included), not every poll. */
+function logChanges(prev: Generation[], next: Generation[]) {
+  const before = new Map(prev.map((g) => [g.id, g]));
+  for (const g of next) {
+    const old = before.get(g.id);
+    if (old ? describe(old) === describe(g) : !isActive(g)) continue;
+    const kind = g.status === "failed" || (g.status === "done" && g.demoFallback) ? "warn" : "state";
+    devLog(kind, SIM + describe(g), { runId: g.id, json: g.status === "done" || g.status === "failed" ? g.credits : undefined });
+  }
+}
+
 function set(next: Partial<StudioState>) {
+  if (next.runs) logChanges(getState().runs, next.runs);
   state = { ...getState(), ...next };
   if (next.runs) persist(KEY, state.runs);
   if (next.favorites) persist(FAVORITES_KEY, state.favorites);
@@ -147,6 +180,7 @@ export function matchesFilter(gen: Generation, filter: LibraryFilter, favorites:
 }
 
 function logSyncError(where: string, err: unknown) {
+  devLog("error", `${where} failed${err instanceof SyncError ? ` (${err.kind}): ${err.message}` : ""}`, { json: err instanceof SyncError ? err.detail : String(err) });
   if (err instanceof SyncError) console.error(`[studio:sync] ${where} failed (${err.kind}): ${err.message}`, err.detail ?? "");
   else console.error(`[studio:sync] ${where} failed (unexpected)`, err);
 }
@@ -166,7 +200,10 @@ export function refresh(): Promise<void> {
     if (pollTimer) clearTimeout(pollTimer);
     pollTimer = null;
     try {
-      const res = await api<{ runs: Generation[]; balance: number; error?: string }>("/api/generations");
+      const t0 = performance.now();
+      const res = await api<{ runs: Generation[]; balance: number; swept?: number; error?: string }>("/api/generations");
+      devLog("api", `GET /api/generations → ${res.status} in ${Math.round(performance.now() - t0)}ms`);
+      if (res.data.swept) devLog("warn", `stale sweep: ${res.data.swept} stuck run(s) failed as timeout and refunded`);
       if (!res.ok) throw new SyncError("server", `Unexpected response (${res.status}): ${res.data.error ?? "no details"}.`, res.data);
       if (failures > 0) console.info(`[studio:sync] recovered after ${failures} failed attempt(s)`);
       failures = 0;
@@ -195,6 +232,11 @@ export function dismissNotice() {
 }
 
 export function startGeneration(intent: Intent) {
+  devLog(
+    "intent",
+    `${SIM}parsed intent: ${intent.media}, ${intent.model}, ${intent.count} output${intent.count > 1 ? "s" : ""}, ${estimateCost(intent)} credits${remoteEnabled ? " (server re-parses and re-prices)" : ""}`,
+    { json: intent },
+  );
   if (remoteEnabled) return void startRemote(intent);
   const batchId = crypto.randomUUID();
   // Reversed so output 1 is upserted last and lands on top, matching the server's order.
@@ -218,13 +260,24 @@ export function startGeneration(intent: Intent) {
 }
 
 async function startRemote(intent: Intent) {
+  set({ pending: intent });
   try {
     // The server re-parses the prompt, re-validates these settings and prices it; it never trusts a client-side cost.
     const overrides = Object.fromEntries(OVERRIDE_KEYS.map((k) => [k, intent[k]]));
-    const res = await api<{ generations?: Generation[]; balance?: number; cost?: number; error?: string }>("/api/generations", {
+    const t0 = performance.now();
+    const res = await api<{ generations?: Generation[]; balance?: number; cost?: number; timing?: { startGenerationMs: number }; error?: string }>("/api/generations", {
       method: "POST",
       body: JSON.stringify({ prompt: intent.prompt, overrides }),
     });
+    devLog(res.ok ? "api" : "warn", `POST /api/generations → ${res.status} in ${Math.round(performance.now() - t0)}ms`, { json: res.ok ? undefined : res.data });
+    if (res.data.timing && res.data.generations) {
+      const n = res.data.generations.length;
+      devLog(
+        "api",
+        `start_generation: balance row locked (FOR UPDATE), cap + balance checked, ${n} row${n > 1 ? "s" : ""} created in ${res.data.timing.startGenerationMs}ms; balance now ${res.data.balance}`,
+        { runId: res.data.generations[0].id },
+      );
+    }
     if (res.status === 402) {
       set({ balance: res.data.balance ?? null, notice: `Not enough credits: this needs ${res.data.cost ?? estimateCost(intent)}, you have ${res.data.balance}. Nothing was charged.` });
       return;
@@ -240,13 +293,17 @@ async function startRemote(intent: Intent) {
     // A dropped response may still have started (and held credits for) the run; the next refresh will show it.
     set({ notice: `${err instanceof SyncError ? err.message : "Couldn't start the generation."} Check your library before retrying.` });
     void refresh();
+  } finally {
+    set({ pending: null });
   }
 }
 
 export function cancelGeneration(id: string) {
   if (!remoteEnabled) return void controllers.get(id)?.abort();
+  const t0 = performance.now();
   void api<{ generation?: Generation; balance?: number }>(`/api/generations/${id}/cancel`, { method: "POST" })
     .then((res) => {
+      devLog(res.ok ? "api" : "warn", `POST /api/generations/${id.slice(0, 8)}…/cancel → ${res.status} in ${Math.round(performance.now() - t0)}ms`, { runId: id });
       if (res.status === 429) set({ notice: "Too many requests. Try cancelling again in a few minutes." });
       if (res.data.generation) upsert(res.data.generation);
       if (typeof res.data.balance === "number") set({ balance: res.data.balance });

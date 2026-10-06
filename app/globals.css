@@ -95,3 +95,17 @@ html:has(dialog[open]:modal) {
   from { background-position: 150% 0; }
   to { background-position: -50% 0; }
 }
+
+/* Active pipeline step: a segment sweeping along the track; a solid partial fill under reduced motion. */
+.step-sweep {
+  width: 40%;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .step-sweep {
+    animation: step-sweep 1.4s ease-in-out infinite;
+  }
+}
+@keyframes step-sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(250%); }
+}

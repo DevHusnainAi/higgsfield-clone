@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import { useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { ArrowUp } from "@phosphor-icons/react";
 import { cheaperAlternatives, costBreakdown, estimateCost } from "@/lib/generation";
 import { parseIntent, type AspectRatio, type IntentOverrides } from "@/lib/intent";
@@ -79,6 +79,13 @@ export function PromptComposer({
         e.preventDefault();
         submit();
       }}
+      // Cmd/Ctrl+Enter submits from anywhere in the composer, including chips and the Advanced panel.
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) {
+          e.preventDefault();
+          submit();
+        }
+      }}
       // Firefox restores form-control state (incl. a button's disabled flag) on reload, before React hydrates.
       autoComplete="off"
       className="glass flex flex-col gap-2 rounded-xl border border-line p-2 shadow-float inset-shadow-edge transition-colors focus-within:border-line-strong"
@@ -101,7 +108,8 @@ export function PromptComposer({
         value={prompt}
         onChange={(e) => onPromptChange(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+          // Plain Enter submits from the textarea; Cmd/Ctrl+Enter bubbles to the form handler below.
+          if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.nativeEvent.isComposing) {
             e.preventDefault();
             submit();
           }
@@ -122,7 +130,13 @@ export function PromptComposer({
           />
         )}
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg-muted" aria-live="polite">
-          {empty ? "Shift + Enter for a new line" : `${costBreakdown(intent)} = ${cost}`}
+          {empty ? (
+            <>
+              <Kbd>/</Kbd> focus · <Kbd>⌘/Ctrl ↵</Kbd> generate · <Kbd>⇧ ↵</Kbd> new line
+            </>
+          ) : (
+            `${costBreakdown(intent)} = ${cost}`
+          )}
         </span>
         <button
           type="submit"
@@ -156,3 +170,7 @@ export function PromptComposer({
     </form>
   );
 }
+
+const Kbd = ({ children }: { children: ReactNode }) => (
+  <kbd className="rounded border border-line-strong px-1 py-px font-mono text-[11px] text-fg">{children}</kbd>
+);

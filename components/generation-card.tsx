@@ -4,6 +4,7 @@ import { ArrowClockwise, Shuffle, X } from "@phosphor-icons/react";
 import { estimateCost, statusMessage, type Generation } from "@/lib/generation";
 import { cancelGeneration, select, startGeneration, useStudio } from "@/lib/store";
 import { FavoriteButton } from "./favorite-button";
+import { PipelineStepper, stepOf } from "./pipeline-stepper";
 import { ResultMedia } from "./result-media";
 
 export function GenerationCard({ gen, onRemix }: { gen: Generation; onRemix: (gen: Generation) => void }) {
@@ -17,7 +18,7 @@ export function GenerationCard({ gen, onRemix }: { gen: Generation; onRemix: (ge
       {/* Reserves the final shape so nothing jumps when the result lands. */}
       {gen.status !== "failed" && (
         <div
-          style={{ aspectRatio: `${w} / ${h}`, maxWidth: `calc(50dvh * ${w} / ${h})` }}
+          style={{ aspectRatio: `${w} / ${h}`, maxWidth: `calc(var(--media-h, 50dvh) * ${w} / ${h})` }}
           className="relative mx-auto w-full overflow-hidden rounded-xl border border-line bg-surface shadow-float inset-shadow-edge"
         >
           {gen.status === "done" ? (
@@ -27,6 +28,8 @@ export function GenerationCard({ gen, onRemix }: { gen: Generation; onRemix: (ge
           )}
         </div>
       )}
+
+      {running && <PipelineStepper active={stepOf(gen)} />}
 
       {batch.length > 1 && (
         <div role="group" aria-label="Outputs from this run" className="flex justify-center gap-2">
@@ -90,18 +93,6 @@ export function GenerationCard({ gen, onRemix }: { gen: Generation; onRemix: (ge
         </div>
       </div>
 
-      {gen.status === "generating" && (
-        <div
-          role="progressbar"
-          aria-label="Progress"
-          aria-valuenow={Math.round(gen.progress * 100)}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          className="h-0.5 overflow-hidden rounded-full"
-        >
-          <div className="h-full origin-left bg-accent transition-transform duration-500" style={{ transform: `scaleX(${gen.progress})` }} />
-        </div>
-      )}
     </section>
   );
 }

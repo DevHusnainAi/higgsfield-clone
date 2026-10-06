@@ -1,22 +1,41 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { ArrowClockwise, CloudSlash, X } from "@phosphor-icons/react";
 import type { Generation } from "@/lib/generation";
 import { remixOverrides, type IntentOverrides } from "@/lib/intent";
+import { useDevConsoleOpen } from "@/lib/dev-log";
 import { dismissNotice, refresh, select, useStudio } from "@/lib/store";
+import { DevConsole } from "./dev-console";
 import { GenerationCard } from "./generation-card";
 import { LibraryGrid } from "./library-grid";
+import { PipelineStepper } from "./pipeline-stepper";
 import { PromptComposer } from "./prompt-composer";
 import { StarterCards } from "./starter-cards";
 
 const focusPrompt = () => document.getElementById("prompt")?.focus();
 
+/** Typing a "/" into a field should type it, not jump to the prompt. */
+const isEditable = (el: EventTarget | null) =>
+  el instanceof HTMLElement && (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName));
+
 export function Workspace() {
-  const { runs, selectedId, view, notice, syncIssue } = useStudio();
+  const { runs, selectedId, view, notice, syncIssue, pending } = useStudio();
+  const devConsole = useDevConsoleOpen();
   const [prompt, setPrompt] = useState("");
   const [overrides, setOverrides] = useState<IntentOverrides>({});
   const selected = runs.find((g) => g.id === selectedId);
+
+  // "/" focuses the prompt from anywhere. Esc already closes the Advanced and Start frame popovers natively.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey || isEditable(e.target)) return;
+      e.preventDefault();
+      focusPrompt();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
 
   function changePrompt(p: string) {
     setPrompt(p);
@@ -38,10 +57,16 @@ export function Workspace() {
   }
 
   return (
-    <div className="flex min-h-[calc(100dvh-3.5rem)] flex-1 flex-col md:min-h-[100dvh]">
+    // With the dev console open the preview shrinks so the card still clears the taller dock.
+    <div
+      style={{ "--media-h": devConsole ? "26dvh" : "50dvh" } as CSSProperties}
+      className="flex min-h-[calc(100dvh-3.5rem)] flex-1 flex-col md:min-h-[100dvh]"
+    >
       <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center-safe gap-6 px-4 pb-10 pt-12">
         {view !== "create" ? (
           <LibraryGrid filter={view} onRemix={remix} />
+        ) : pending ? (
+          <PendingCard ratio={pending.aspectRatio} />
         ) : selected ? (
           <GenerationCard key={selected.id} gen={selected} onRemix={remix} />
         ) : (
@@ -81,7 +106,30 @@ export function Workspace() {
           )}
           <PromptComposer prompt={prompt} onPromptChange={changePrompt} overrides={overrides} onOverridesChange={setOverrides} />
         </div>
+        {devConsole && (
+          <div className="mx-auto mt-2 w-full max-w-5xl">
+            <DevConsole />
+          </div>
+        )}
       </div>
     </div>
   );
 }
+
+/** The start request is in flight: the intent is parsed, and the server is locking credits and creating rows. */
+function PendingCard({ ratio }: { ratio: string }) {
+  const [w, h] = ratio.split(":").map(Number);
+  return (
+    <section aria-label="Starting generation" className="flex flex-col gap-3">
+      <div
+        style={{ aspectRatio: `${w} / ${h}`, maxWidth: `calc(var(--media-h, 50dvh) * ${w} / ${h})` }}
+        className="shimmer relative mx-auto w-full overflow-hidden rounded-xl border border-line shadow-float inset-shadow-edge"
+      />
+      <PipelineStepper active={1} />
+      <p role="status" className="text-sm text-fg">
+        Holding credits
+      </p>
+    </section>
+  );
+}
+
