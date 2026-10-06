@@ -58,23 +58,30 @@ function Thumb({ g }: { g: Generation }) {
   );
 }
 
-/** Guest with no runs yet: why signing in matters, in place of the empty-state line. */
-function ActivateHistory({ onNavigate }: { onNavigate: () => void }) {
+/**
+ * Guest with no runs yet: why signing in matters, in place of the empty-state line. Sized by its content
+ * (no fixed height): the loading placeholder is this same card rendered invisibly, so the two always match.
+ */
+function ActivateHistory({ onNavigate, placeholder = false }: { onNavigate?: () => void; placeholder?: boolean }) {
   return (
-    <div className="flex h-[8.25rem] flex-col gap-2.5 rounded-xl border border-line bg-surface-raised p-3 inset-shadow-edge transition-opacity duration-200 starting:opacity-0">
-      <span className="flex items-center gap-2">
+    <div
+      aria-hidden={placeholder || undefined}
+      inert={placeholder || undefined}
+      className={`flex flex-col gap-3 rounded-xl border border-line bg-surface-raised p-3.5 inset-shadow-edge ${placeholder ? "invisible" : "transition-opacity duration-200 starting:opacity-0"}`}
+    >
+      <span className="flex items-center gap-2.5">
         <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-accent/15 text-accent-text">
           <ClockCounterClockwise size={14} aria-hidden />
         </span>
-        <span className="text-ui font-medium text-fg">Activate history</span>
+        <span className="text-ui font-medium text-fg">Saved in this browser only</span>
       </span>
-      <p className="text-2xs text-fg-muted">Guest runs live in this browser only. Sign in to keep them on every device and get 40 free credits.</p>
+      <p className="text-2xs text-fg-muted">Sign in to keep your runs on every device and get 40 free credits.</p>
       {/* In-app link: intercepted into the sign-in modal over the studio. */}
       <Link
         href="/sign-in"
         scroll={false}
         onClick={onNavigate}
-        className="mt-auto grid h-8 place-items-center rounded-lg bg-accent text-ui font-medium text-accent-ink transition hover:brightness-105 active:scale-[0.98]"
+        className="grid h-9 shrink-0 place-items-center rounded-lg bg-accent text-ui font-medium text-accent-ink inset-shadow-edge transition hover:brightness-105 active:scale-[0.98]"
       >
         Activate history
       </Link>
@@ -101,7 +108,10 @@ function RecentRuns({ go }: { go: (fn: () => void) => () => void }) {
     <section aria-labelledby="recent-heading" className="flex flex-col gap-0.5">
       <h2 id="recent-heading" className="px-3 pb-1.5 text-xs font-medium text-fg-muted">Recent</h2>
       {recent.length === 0 && remoteEnabled && auth.status === "unknown" ? (
-        <div aria-hidden className="h-[8.25rem] rounded-xl bg-fg/[0.04] motion-safe:animate-pulse" />
+        <div className="relative">
+          <ActivateHistory placeholder />
+          <div aria-hidden className="absolute inset-0 rounded-xl bg-fg/[0.04] motion-safe:animate-pulse" />
+        </div>
       ) : recent.length === 0 && guest ? (
         <ActivateHistory onNavigate={closeDrawer} />
       ) : recent.length === 0 ? (
