@@ -1,6 +1,6 @@
 import Image from "next/image";
 
-const isVideo = (url: string) => /\.(mp4|webm)$/i.test(new URL(url).pathname);
+export const isVideo = (url: string) => /\.(mp4|webm)$/i.test(new URL(url).pathname);
 
 /** Real renders can be video files; the local simulator returns stills. */
 export function ResultMedia({ url, alt, sizes, className = "", controls = false }: { url: string; alt: string; sizes: string; className?: string; controls?: boolean }) {

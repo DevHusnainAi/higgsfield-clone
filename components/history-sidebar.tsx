@@ -1,9 +1,15 @@
 "use client";
 
+import Image from "next/image";
 import { useRef, type ComponentType, type ReactNode } from "react";
-import { FilmStrip, Heart, ImageSquare, List, Plus, Sparkle, SquaresFour, Terminal, X, type IconProps } from "@phosphor-icons/react";
+import { CheckCircle, CircleNotch, FilmStrip, Heart, ImageSquare, List, Plus, Sparkle, SquaresFour, Terminal, WarningCircle, X, type IconProps } from "@phosphor-icons/react";
+import { isVideo } from "@/components/result-media";
+import type { Generation } from "@/lib/generation";
 import { setDevConsole, useDevConsoleOpen } from "@/lib/dev-log";
+import { remoteEnabled } from "@/lib/remote";
 import { matchesFilter, select, setView, useStudio, type LibraryFilter, type View } from "@/lib/store";
+
+const RECENT = 8;
 
 const LIBRARY: { filter: LibraryFilter; label: string; icon: ComponentType<IconProps> }[] = [
   { filter: "all", label: "All", icon: SquaresFour },
@@ -18,7 +24,87 @@ function newGeneration() {
 }
 
 const iconButton =
-  "grid size-8 place-items-center rounded-full border border-line text-fg-muted inset-shadow-edge transition hover:border-line-strong hover:text-fg active:scale-[0.96]";
+  "grid size-8 place-items-center rounded-full border border-line text-fg-muted inset-shadow-edge transition hover:border-line-strong hover:text-fg active:scale-[0.98]";
+
+// ponytail: computed at render, so it only advances when the store updates; add a minute ticker if stale labels matter
+function ago(ms: number) {
+  const s = Math.max(0, (Date.now() - ms) / 1000);
+  if (s < 60) return "now";
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h`;
+  return `${Math.floor(s / 86400)}d`;
+}
+
+/** Status as icon + word, never colour alone. */
+function status(g: Generation): { icon: ComponentType<IconProps>; label: string; tone: string; spin?: boolean } {
+  if (g.status === "failed") return { icon: WarningCircle, label: "Failed", tone: "text-danger" };
+  if (g.status === "done") return { icon: CheckCircle, label: g.demoFallback ? "Stock" : "Done", tone: "text-fg-muted" };
+  return { icon: CircleNotch, label: g.status === "queued" ? "Queued" : `${Math.round(g.progress * 100)}%`, tone: "text-accent-text", spin: true };
+}
+
+function Thumb({ g }: { g: Generation }) {
+  const Fallback = g.intent.media === "video" ? FilmStrip : ImageSquare;
+  return (
+    <span className="relative grid size-7 shrink-0 place-items-center overflow-hidden rounded-md border border-line bg-stage text-fg-muted">
+      {g.status === "done" && !isVideo(g.resultUrl) ? (
+        <Image src={g.resultUrl} alt="" fill sizes="28px" className="object-cover" />
+      ) : (
+        <Fallback size={13} aria-hidden />
+      )}
+    </span>
+  );
+}
+
+function RecentRuns({ go }: { go: (fn: () => void) => () => void }) {
+  const { runs, selectedId, view } = useStudio();
+  // One row per run: a 4-output batch shows its first output, not four rows.
+  const seen = new Set<string>();
+  const recent: { g: Generation; outputs: number }[] = [];
+  for (const g of runs) {
+    const key = g.batchId ?? g.id;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    recent.push({ g, outputs: g.batchId ? runs.filter((r) => r.batchId === g.batchId).length : 1 });
+    if (recent.length === RECENT) break;
+  }
+
+  return (
+    <section aria-labelledby="recent-heading" className="flex flex-col gap-0.5">
+      <h2 id="recent-heading" className="px-3 pb-1.5 text-xs font-medium text-fg-muted">Recent</h2>
+      {recent.length === 0 ? (
+        <p className="px-3 text-xs text-fg-muted">Runs you start appear here.</p>
+      ) : (
+        <ul className="flex flex-col gap-0.5">
+          {recent.map(({ g, outputs }) => {
+            const s = status(g);
+            const current = view === "create" && (selectedId === g.id || (!!g.batchId && runs.some((r) => r.id === selectedId && r.batchId === g.batchId)));
+            return (
+              <li key={g.id}>
+                <button
+                  onClick={go(() => select(g.id))}
+                  aria-current={current ? "true" : undefined}
+                  className="flex w-full min-w-0 items-center gap-2.5 rounded-lg px-3 py-1.5 text-left transition-colors hover:bg-fg/[0.04] aria-[current]:bg-surface-hover aria-[current]:inset-shadow-edge"
+                >
+                  <Thumb g={g} />
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    {/* Full prompt stays in the DOM, so the accessible name is never truncated; only the paint is clamped. */}
+                    <span className="line-clamp-1 text-ui text-fg [overflow-wrap:anywhere]">{g.intent.prompt || "Untitled"}</span>
+                    <span className="flex items-center gap-1 text-2xs tabular-nums text-fg-muted">
+                      <s.icon size={11} aria-hidden className={`shrink-0 ${s.tone} ${s.spin ? "motion-safe:animate-spin" : ""}`} />
+                      <span className={s.tone}>{s.label}</span>
+                      {outputs > 1 && <span>×{outputs}</span>}
+                      <span className="ml-auto shrink-0">{ago(g.createdAt)}</span>
+                    </span>
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
 
 function NavItem({
   active,
@@ -37,10 +123,10 @@ function NavItem({
     <button
       onClick={onClick}
       aria-current={active ? "page" : undefined}
-      className="group relative flex h-10 w-full items-center gap-2.5 rounded-xl px-3 text-sm text-fg-muted transition-colors hover:bg-fg/[0.04] hover:text-fg aria-[current]:bg-fg/[0.06] aria-[current]:text-fg aria-[current]:inset-shadow-edge before:absolute before:inset-y-2 before:-left-3 before:w-0.5 before:rounded-full before:bg-accent before:opacity-0 aria-[current]:before:opacity-100 md:h-9"
+      className="group relative flex h-10 w-full items-center gap-2.5 rounded-xl px-3 text-ui text-fg-muted transition-colors hover:bg-fg/[0.04] hover:text-fg aria-[current]:bg-fg/[0.06] aria-[current]:text-fg aria-[current]:inset-shadow-edge before:absolute before:inset-y-2 before:-left-3 before:w-0.5 before:rounded-full before:bg-accent before:opacity-0 aria-[current]:before:opacity-100 md:h-9"
     >
       <Icon size={17} weight={active ? "fill" : "regular"} className="shrink-0" />
-      <span className="flex-1 text-left">{label}</span>
+      <span className="min-w-0 flex-1 truncate text-left">{label}</span>
       {trailing}
     </button>
   );
@@ -80,7 +166,7 @@ function SidebarBody({ onNavigate, onClose }: { onNavigate?: () => void; onClose
         )}
       </div>
 
-      <nav aria-label="Studio" className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-3 pt-1">
+      <nav aria-label="Studio" className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-3 pt-1 pb-2">
         <NavItem
           active={isActive("create")}
           onClick={go(() => setView("create"))}
@@ -112,6 +198,8 @@ function SidebarBody({ onNavigate, onClose }: { onNavigate?: () => void; onClose
             />
           ))}
         </div>
+
+        <RecentRuns go={go} />
       </nav>
 
       <div className="m-3 rounded-xl border border-line bg-surface-raised p-3 inset-shadow-edge">
@@ -128,23 +216,24 @@ function SidebarBody({ onNavigate, onClose }: { onNavigate?: () => void; onClose
             <Terminal size={13} />
           </button>
         </div>
-        <dl className="grid grid-cols-[1fr_auto] gap-y-1 text-sm">
-          {balance !== null && (
+        {/* Every row renders from the first paint (placeholders until data lands), so the box never changes height. */}
+        <dl className="grid grid-cols-[1fr_auto] gap-y-1 text-ui">
+          {remoteEnabled && (
             <>
               <dt className="text-fg-muted">Balance</dt>
-              <dd className="text-right font-medium tabular-nums text-fg">{balance}</dd>
+              <dd className="text-right font-medium tabular-nums text-fg">
+                {balance ?? (
+                  <span aria-label="Loading" className="inline-block h-3 w-8 rounded bg-fg/[0.08] align-middle motion-safe:animate-pulse" />
+                )}
+              </dd>
             </>
           )}
           <dt className="text-fg-muted">Used this session</dt>
           <dd className="text-right tabular-nums text-fg">{used}</dd>
           <dt className="text-fg-muted">Refunded</dt>
           <dd className="text-right tabular-nums text-fg">{refunded}</dd>
-          {held > 0 && (
-            <>
-              <dt className="text-fg-muted">On hold</dt>
-              <dd className="text-right tabular-nums text-accent-text">{held}</dd>
-            </>
-          )}
+          <dt className="text-fg-muted">On hold</dt>
+          <dd className={`text-right tabular-nums ${held > 0 ? "text-accent-text" : "text-fg-muted"}`}>{held}</dd>
         </dl>
       </div>
     </div>
