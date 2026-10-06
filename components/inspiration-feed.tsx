@@ -7,7 +7,8 @@ import { estimateCost, type Generation } from "@/lib/generation";
 import { parseIntent, type Intent } from "@/lib/intent";
 import { title } from "./param-chips";
 
-// Each preset exercises a different part of the parser; the photo (picsum id) was picked to match the prompt.
+// Each preset exercises a different part of the parser. Photos (Unsplash, via picsum ids) were picked to match
+// each prompt and are self-hosted in public/presets at the preset's aspect ratio: no runtime CDN dependency.
 const PRESETS: { id: number; prompt: string }[] = [
   { id: 1060, prompt: "Slow dolly-in on pour-over coffee brewing, vertical video, 6s" },
   { id: 1027, prompt: "Portrait photo of a woman in soft window light, 4:5" },
@@ -97,7 +98,7 @@ export function InspirationFeed({
                 <button onClick={() => onPick(prompt, labels)} className={tile}>
                   <span style={{ aspectRatio: `${w} / ${h}` }} className="relative block w-full overflow-hidden bg-stage">
                     <Image
-                      src={`https://picsum.photos/id/${id}/600/${Math.round((600 * h) / w)}`}
+                      src={`/presets/${id}.jpg`}
                       alt=""
                       fill
                       sizes="(min-width: 1280px) 280px, (min-width: 768px) 33vw, 50vw"
