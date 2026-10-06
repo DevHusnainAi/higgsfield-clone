@@ -9,6 +9,8 @@ import { intentLabels } from "@/lib/labels";
 
 // Each preset exercises a different part of the parser. Photos (Unsplash, via picsum ids) were picked to match
 // each prompt and are self-hosted in public/presets at the preset's aspect ratio: no runtime CDN dependency.
+// Pre-encoded to 640px WebP and served as-is (unoptimized): they're the first screen's only images, and
+// Next 16.3.8's self-hosted optimizer wedges a URL for good once one request for it is aborted mid-encode.
 const PRESETS: { id: number; prompt: string }[] = [
   { id: 1060, prompt: "Slow dolly-in on pour-over coffee brewing, vertical video, 6s" },
   { id: 1027, prompt: "Portrait photo of a woman in soft window light, 4:5" },
@@ -87,10 +89,10 @@ export function InspirationFeed({
                 <button onClick={() => onPick(prompt, labels)} className={tile}>
                   <span style={{ aspectRatio: `${w} / ${h}` }} className="relative block w-full overflow-hidden bg-stage">
                     <Image
-                      src={`/presets/${id}.jpg`}
+                      src={`/presets/${id}.webp`}
                       alt=""
                       fill
-                      sizes="(min-width: 1280px) 280px, (min-width: 768px) 33vw, 50vw"
+                      unoptimized
                       priority={i < 4}
                       className="object-cover transition-transform duration-500 motion-safe:group-hover:scale-[1.03]"
                     />
