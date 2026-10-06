@@ -49,3 +49,26 @@ jobs:
           for i in $(seq 1 30); do curl -sf http://localhost:3000 >/dev/null && exit 0; sleep 1; done
           echo "server did not start" && exit 1
       - run: npm run test:a11y
+
+  auth:
+    name: Sign-in flows (mocked Supabase, axe)
+    runs-on: ubuntu-latest
+    env:
+      # A fake project: every Supabase call is answered by the test's network mocks.
+      NEXT_PUBLIC_SUPABASE_URL: https://fake.supabase.test
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: sb_publishable_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright-core install --with-deps chromium
+      - run: npm run build
+      - name: Start the app
+        run: |
+          npm start &
+          for i in $(seq 1 30); do curl -sf http://localhost:3000/sign-in >/dev/null && exit 0; sleep 1; done
+          echo "server did not start" && exit 1
+      - run: npm run test:auth

@@ -9,7 +9,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "node --test lib/*.test.ts",
-    "test:a11y": "node --test e2e/a11y.test.ts"
+    "test:a11y": "node --test e2e/a11y.test.ts",
+    "test:auth": "node --test e2e/auth.test.ts"
   },
   "dependencies": {
     "@huggingface/inference": "^4.13.30",
