@@ -2,7 +2,7 @@
 // Credits are held at submit, charged only on success, refunded on any failure.
 import type { AspectRatio, Intent } from "./intent";
 
-export type FailureReason = "capacity" | "provider_error" | "timeout" | "cancelled";
+export type FailureReason = "capacity" | "provider_error" | "timeout" | "cancelled" | "interrupted";
 
 interface Base {
   id: string;
@@ -35,6 +35,13 @@ export const CREDITS = { image: 4, videoPerSecond: 6 } as const;
 
 export function estimateCost(intent: Intent): number {
   return intent.media === "video" ? CREDITS.videoPerSecond * (intent.durationSec ?? 0) : CREDITS.image;
+}
+
+/** The math behind estimateCost, for display next to the price. */
+export function costBreakdown(intent: Intent): string {
+  return intent.media === "video"
+    ? `${intent.durationSec ?? 0}s × ${CREDITS.videoPerSecond} credits/s`
+    : `1 image × ${CREDITS.image} credits`;
 }
 
 export function createGeneration(intent: Intent, now = Date.now()): Generation {
@@ -97,6 +104,7 @@ const FAILURE_TEXT: Record<FailureReason, string> = {
   provider_error: "The model returned an error",
   timeout: "This took longer than our 2 minute limit",
   cancelled: "You cancelled this generation",
+  interrupted: "The page closed before this finished",
 };
 
 /** Status line tied to real state and progress, never random filler. */
