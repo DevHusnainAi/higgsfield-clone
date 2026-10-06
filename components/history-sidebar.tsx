@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useRef, type ComponentType, type ReactNode } from "react";
-import { CheckCircle, CircleNotch, FilmStrip, Heart, ImageSquare, List, Plus, Sparkle, SquaresFour, Terminal, WarningCircle, X, type IconProps } from "@phosphor-icons/react";
+import { CheckCircle, CircleNotch, ClockCounterClockwise, FilmStrip, Heart, ImageSquare, List, Plus, Sparkle, SquaresFour, Terminal, WarningCircle, X, type IconProps } from "@phosphor-icons/react";
 import { AccountRow } from "@/components/account";
 import { Logo } from "@/components/logo";
 import { isVideo } from "@/components/result-media";
@@ -58,8 +58,34 @@ function Thumb({ g }: { g: Generation }) {
   );
 }
 
+/** Guest with no runs yet: why signing in matters, in place of the empty-state line. */
+function ActivateHistory({ onNavigate }: { onNavigate: () => void }) {
+  return (
+    <div className="flex h-[8.25rem] flex-col gap-2.5 rounded-xl border border-line bg-surface-raised p-3 inset-shadow-edge transition-opacity duration-200 starting:opacity-0">
+      <span className="flex items-center gap-2">
+        <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-accent/15 text-accent-text">
+          <ClockCounterClockwise size={14} aria-hidden />
+        </span>
+        <span className="text-ui font-medium text-fg">Activate history</span>
+      </span>
+      <p className="text-2xs text-fg-muted">Guest runs live in this browser only. Sign in to keep them on every device and get 40 free credits.</p>
+      {/* In-app link: intercepted into the sign-in modal over the studio. */}
+      <Link
+        href="/sign-in"
+        scroll={false}
+        onClick={onNavigate}
+        className="mt-auto grid h-8 place-items-center rounded-lg bg-accent text-ui font-medium text-accent-ink transition hover:brightness-105 active:scale-[0.98]"
+      >
+        Activate history
+      </Link>
+    </div>
+  );
+}
+
 function RecentRuns({ go }: { go: (fn: () => void) => () => void }) {
-  const { runs, selectedId, view } = useStudio();
+  const { runs, selectedId, view, auth } = useStudio();
+  const guest = remoteEnabled && auth.status === "anonymous";
+  const closeDrawer = go(() => {});
   // One row per run: a 4-output batch shows its first output, not four rows.
   const seen = new Set<string>();
   const recent: { g: Generation; outputs: number }[] = [];
@@ -74,7 +100,11 @@ function RecentRuns({ go }: { go: (fn: () => void) => () => void }) {
   return (
     <section aria-labelledby="recent-heading" className="flex flex-col gap-0.5">
       <h2 id="recent-heading" className="px-3 pb-1.5 text-xs font-medium text-fg-muted">Recent</h2>
-      {recent.length === 0 ? (
+      {recent.length === 0 && remoteEnabled && auth.status === "unknown" ? (
+        <div aria-hidden className="h-[8.25rem] rounded-xl bg-fg/[0.04] motion-safe:animate-pulse" />
+      ) : recent.length === 0 && guest ? (
+        <ActivateHistory onNavigate={closeDrawer} />
+      ) : recent.length === 0 ? (
         <p className="px-3 text-xs text-fg-muted">Runs you start appear here.</p>
       ) : (
         <ul className="flex flex-col gap-0.5">
@@ -104,6 +134,14 @@ function RecentRuns({ go }: { go: (fn: () => void) => () => void }) {
             );
           })}
         </ul>
+      )}
+      {recent.length > 0 && guest && (
+        <p className="flex items-center gap-1 px-3 pt-1 text-2xs text-fg-muted">
+          Saved in this browser only ·
+          <Link href="/sign-in" scroll={false} onClick={closeDrawer} className="font-medium text-accent-text underline-offset-2 hover:underline">
+            Activate
+          </Link>
+        </p>
       )}
     </section>
   );
@@ -241,7 +279,7 @@ function SidebarBody({ onNavigate, onClose }: { onNavigate?: () => void; onClose
           <dd className={`text-right tabular-nums ${held > 0 ? "text-accent-text" : "text-fg-muted"}`}>{held}</dd>
         </dl>
       </div>
-      <AccountRow />
+      <AccountRow onNavigate={onNavigate} />
       {/* Google's OAuth review requires the home page to link the privacy policy. */}
       <p className="flex shrink-0 gap-4 px-6 pb-3 text-2xs text-fg-muted">
         <Link href="/privacy" className="hover:text-fg">Privacy</Link>

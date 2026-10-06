@@ -61,7 +61,7 @@ Intent Studio is built around the opposite promises:
 | **Batches** | 1 to 4 outputs per run, held in one transaction, refunded per output. |
 | **Image-to-video** | Attach a start frame from your private library (10 frames, 5 MB each). |
 | **Studio workspace** | Masonry feed of presets, stage + inspector for each run, library with filters and favorites, remix, keyboard shortcuts (`/`, `⌘/Ctrl ↵`). |
-| **Accounts** | Try instantly as a guest (8 credits). Sign in with Google or a magic link to keep your history everywhere and get 40 credits. |
+| **Accounts** | Try instantly as a guest (8 credits). Sign in with Google, a magic link, or the 6-digit code from the same email to keep your history everywhere and get 40 credits. Sign-in opens as a modal over the studio, or as a full split page on a direct visit, with Iris, a creature that follows your cursor and covers its eyes while you type the code. |
 | **Dev console** | A live, read-only stream of the pipeline: parsed intent, request latency, credit lock timing, state changes. |
 
 <img src="docs/run.jpg" alt="A finished run on the dark stage with the run inspector beside it: prompt, model, format, aspect ratio, seed, guidance, credits charged, start time and duration." width="100%">
@@ -239,6 +239,7 @@ Node.js **22.18+** is required (the tests run TypeScript directly with Node's ty
 - [ ] Authentication → Sign In / Providers: **Anonymous sign-ins** on, **Google** on (client id and secret from a Google Cloud OAuth client with redirect URI `https://<ref>.supabase.co/auth/v1/callback`)
 - [ ] Auth settings: **Allow manual linking** on (guests upgrade by linking Google to the same user)
 - [ ] Authentication → URL Configuration: Site URL and redirect URLs for production and `http://localhost:3000`
+- [ ] Authentication → Emails → Templates: add `{{ .Token }}` to **Magic Link** and **Change Email Address**, so each email carries the 6-digit code as well as the link (for signing in on a different device than the one reading the email)
 - [ ] Authentication → Emails: **custom SMTP** (Resend, Postmark…). The built-in sender is rate-limited and meant for testing, so magic links fail at launch volume without it
 - [ ] Authentication → Attack Protection: CAPTCHA (Turnstile) and a lower anonymous sign-in rate limit
 
@@ -256,6 +257,7 @@ npm run build
 | `lib/db.test.ts` | Applies the **real migrations** to PGlite (Postgres in WASM) with stubbed Supabase schemas. Holds, exactly-once settlement, the status/credit constraint, the stale sweep, batches, the active-run cap, rate limits, storage policies and quota, the 402 fallback refund, RLS for cross-user reads/writes/RPCs, the 8/40 grants, and history-only merges. No Docker, no network. |
 | `lib/logic.test.ts` | Parser detection, negation and clamping, the override trust boundary, start-frame path allow-list against URL/traversal/`file://` payloads, remix, cheaper alternatives, batch pricing, state-machine invariants. |
 | `lib/store.test.ts` | Cached history is kept only for the account that owns it. |
+| `lib/gaze.test.ts` | Gaze stays inside the eye; smoothing is identical at 60Hz and 120Hz; the paw spring overshoots ~4% and settles in under 0.4s. |
 | `lib/supabase-key.test.ts` | Only a service-role key is accepted as the server key. |
 | `e2e/a11y.test.ts` | axe-core, WCAG 2.2 AA, in Chromium. Runs against a local-mode server so it can't write to a live project: |
 
@@ -274,13 +276,17 @@ app/
   api/generations/route.ts       GET history + balance · POST start (auth, rate limit, re-parse, re-price, RPC)
   api/generations/[id]/cancel/   owner-scoped cancel
   api/account/merge/             guest history → signed-in account (history only)
+  (studio)/@modal/(.)sign-in/    in-app navigation to /sign-in, intercepted into a modal over the studio
+  (auth)/sign-in/                direct load or refresh of /sign-in: the full split page (no guest session)
   opengraph-image.tsx            social card rendered from the real parser
 components/                      composer, chips, advanced panel, start frames, stage, inspector, feed, library, sidebar, account
+  auth/                          sign-in form, Iris (the creature), modal and page shells
 lib/
   intent.ts                      prompt → Intent, overrides, sanitization (client + server)
   generation.ts                  state machine, pricing, batches, cheaper alternatives, simulator
   models.ts                      model registry and rate card (client + server)
   store.ts                       client store, auth state, polling, backoff, offline cache
+  gaze.ts                        Iris's motion maths: gaze vector, frame-rate independent smoothing, damped spring
   remote.ts                      Supabase session, sign-in flows, authenticated fetch, start-frame storage
   server/                        service-role client, token checks, rate limiter, render worker
 supabase/migrations/             schema, RPCs, RLS, storage policies, quotas, accounts (applied in order)
