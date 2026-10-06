@@ -258,10 +258,18 @@ Leave the Supabase variables empty. The UI runs entirely in the browser against 
 ## Testing
 
 ```bash
-npm test             # 23 tests, ~20s
+npm test             # 25 tests, ~30s
 npm run lint
 npx tsc --noEmit
 npm run build
+```
+
+**Accessibility (`e2e/a11y.test.ts`):** axe-core in Chromium, WCAG 2.2 AA, over the home feed, composer with chips, an open chip menu, the Advanced panel, a finished run, the library and the mobile drawer. It needs a server in local mode, so it never writes to a live Supabase project:
+
+```bash
+NEXT_PUBLIC_SUPABASE_URL= NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY= SUPABASE_SECRET_KEY= npm run build
+NEXT_PUBLIC_SUPABASE_URL= NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY= SUPABASE_SECRET_KEY= npm start
+npm run test:a11y    # BASE_URL defaults to http://localhost:3000
 ```
 
 `lib/db.test.ts` boots **PGlite** with stubbed Supabase schemas: roles, `auth.uid()`, `storage.objects`, `storage.foldername`, and Supabase's default table grants. It then applies the real migration files in order. It covers:
