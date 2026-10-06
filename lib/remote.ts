@@ -171,6 +171,17 @@ async function mergeGuest(user: User): Promise<string | null> {
   }
 }
 
+const CONFLICT_CODES = new Set(["identity_already_exists", "email_exists", "user_already_exists"]);
+/** The account being linked already exists (by code, or by Supabase's wording if the code is missing). */
+export const isAccountConflict = (code: string | null, description: string) =>
+  (code !== null && CONFLICT_CODES.has(code)) || /already (been )?registered|already exists|already linked/i.test(description);
+
+const RETRY_KEY = "studio.oauth-conflict-retry";
+const recentlyRetried = () => {
+  const at = Number(sessionStorage.getItem(RETRY_KEY));
+  return at > 0 && Date.now() - at < 5 * 60_000;
+};
+
 /**
  * Calls `cb` with the current account now and on every change. `message` carries anything the user should
  * see (a merge result, or an error that came back from the OAuth redirect).
@@ -178,17 +189,22 @@ async function mergeGuest(user: User): Promise<string | null> {
 export function watchAuth(cb: (auth: Auth, uid: string | null, message: string | null) => void) {
   const auth = supabase().auth;
 
-  // OAuth errors come back on the URL. A Google account that already exists can't be linked: sign in to it instead.
+  // OAuth errors come back on the URL. Linking Google to the guest fails when that account already exists:
+  // the Google identity is on another user (identity_already_exists), or its email is (email_exists, "A user
+  // with this email address has already been registered"). Either way: sign in to that account instead, and
+  // the guest's history follows via /api/account/merge. Only once per few minutes, so it can never loop.
   const params = new URLSearchParams(window.location.search + "&" + window.location.hash.slice(1));
   const code = params.get("error_code");
+  const description = params.get("error_description") ?? "";
   let urlMessage: string | null = null;
-  if (code) {
+  if (code || params.get("error")) {
     window.history.replaceState(null, "", window.location.pathname);
-    if (code === "identity_already_exists") {
+    if (isAccountConflict(code, description) && !recentlyRetried()) {
+      sessionStorage.setItem(RETRY_KEY, String(Date.now()));
       void saveGuest().then(() => auth.signInWithOAuth({ provider: "google", options: { redirectTo: redirectTo() } }));
       return;
     }
-    urlMessage = `Sign-in failed: ${params.get("error_description") ?? code}`;
+    urlMessage = `Sign-in failed: ${description || code}`;
   }
 
   auth.onAuthStateChange((event, s) => {

@@ -148,3 +148,27 @@ test("reduced motion: radar and Iris are still, the waiting state still works", 
   await axe(page, "sign-in page, waiting, reduced motion");
   await ctx.close();
 });
+
+test("Google link to an email that already has an account signs in to it (once), keeping the guest's history", async () => {
+  const ctx = await context();
+  const authorize: string[] = [];
+  await ctx.route(`${SUPABASE}/auth/v1/authorize**`, (r) => {
+    authorize.push(r.request().url());
+    return r.fulfill({ contentType: "text/html", body: "<p>Google</p>" });
+  });
+  const page = await ctx.newPage();
+  await page.addInitScript(([key, s]) => localStorage.setItem(key, JSON.stringify(s)), [STORAGE_KEY, session(GUEST)] as const);
+  // What Supabase sends back when linking Google to the guest finds the email already registered.
+  await page.goto(`${BASE}/?error=server_error&error_code=email_exists&error_description=A+user+with+this+email+address+has+already+been+registered`);
+  await page.waitForURL(/fake\.supabase\.test\/auth\/v1\/authorize/, { timeout: 5000 });
+  assert.equal(authorize.length, 1);
+  assert.match(authorize[0], /provider=google/);
+  const handoff = (await ctx.storageState()).origins.find((o) => o.origin === BASE)?.localStorage.find((i) => i.name === "studio.guest-handoff");
+  assert.ok(handoff && JSON.parse(handoff.value).uid === GUEST.id, "guest token saved so its history can be merged");
+
+  // The same error again right away (e.g. a real misconfiguration) is shown, not retried in a loop.
+  await page.goto(`${BASE}/?error=server_error&error_code=email_exists&error_description=A+user+with+this+email+address+has+already+been+registered`);
+  await page.getByText(/Sign-in failed: A user with this email address/).waitFor({ timeout: 5000 });
+  assert.equal(authorize.length, 1);
+  await ctx.close();
+});
