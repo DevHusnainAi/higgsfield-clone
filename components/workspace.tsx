@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
 import { ArrowClockwise, CloudSlash, X } from "@phosphor-icons/react";
 import type { Generation } from "@/lib/generation";
 import { remixOverrides, type IntentOverrides } from "@/lib/intent";
@@ -11,9 +11,29 @@ import { GenerationCard } from "./generation-card";
 import { LibraryGrid } from "./library-grid";
 import { PipelineStepper } from "./pipeline-stepper";
 import { PromptComposer } from "./prompt-composer";
+import { RunInspector } from "./run-inspector";
 import { InspirationFeed, remixable } from "./inspiration-feed";
 
 const focusPrompt = () => document.getElementById("prompt")?.focus();
+
+// Landscape phones and 400% zoom: the dock + console can be taller than the screen (WCAG 1.4.10).
+const SHORT = "(max-height: 640px)";
+const subscribeShort = (cb: () => void) => {
+  const mq = matchMedia(SHORT);
+  mq.addEventListener("change", cb);
+  return () => mq.removeEventListener("change", cb);
+};
+const useShortViewport = () => useSyncExternalStore(subscribeShort, () => matchMedia(SHORT).matches, () => false);
+
+/** Media on the darkest tier, run properties beside it (below it under lg). */
+function Stage({ children, inspector }: { children: ReactNode; inspector: ReactNode }) {
+  return (
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px] lg:items-start">
+      <div className="min-w-0 rounded-2xl border border-line-subtle bg-stage p-4 md:p-6">{children}</div>
+      {inspector}
+    </div>
+  );
+}
 
 /** Typing a "/" into a field should type it, not jump to the prompt. */
 const isEditable = (el: EventTarget | null) =>
@@ -27,6 +47,18 @@ export function Workspace() {
   const [announcement, setAnnouncement] = useState("");
   const selected = runs.find((g) => g.id === selectedId);
   const empty = view === "create" && !pending && !selected;
+  const staged = view === "create" && !empty;
+  const short = useShortViewport();
+  const dock = useRef<HTMLDivElement>(null);
+
+  // Publish the dock's real height so scroll-padding keeps focused elements clear of it (WCAG 2.4.11).
+  useEffect(() => {
+    const el = dock.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => document.documentElement.style.setProperty("--dock-h", `${el.offsetHeight}px`));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // "/" focuses the prompt from anywhere. Esc already closes the Advanced and Start frame popovers natively.
   useEffect(() => {
@@ -70,13 +102,25 @@ export function Workspace() {
       style={{ "--media-h": devConsole ? "26dvh" : "50dvh" } as CSSProperties}
       className="flex min-h-[calc(100dvh-3.5rem)] flex-1 flex-col md:min-h-[100dvh]"
     >
-      <div className={`mx-auto flex w-full flex-1 flex-col justify-center-safe gap-6 px-4 pb-10 pt-12 ${empty ? "max-w-6xl" : "max-w-3xl"}`}>
+      <div className={`mx-auto flex w-full flex-1 flex-col justify-center-safe gap-6 px-4 pb-10 pt-12 ${empty ? "max-w-6xl" : staged ? "max-w-3xl lg:max-w-6xl xl:max-w-[1400px]" : "max-w-3xl"}`}>
         {view !== "create" ? (
           <LibraryGrid filter={view} onRemix={remix} />
         ) : pending ? (
-          <PendingCard ratio={pending.aspectRatio} />
+          <Stage inspector={<RunInspector intent={pending} outputs={pending.count} />}>
+            <PendingCard ratio={pending.aspectRatio} />
+          </Stage>
         ) : selected ? (
-          <GenerationCard key={selected.id} gen={selected} onRemix={remix} />
+          <Stage
+            inspector={
+              <RunInspector
+                intent={selected.intent}
+                gen={selected}
+                outputs={selected.batchId ? runs.filter((g) => g.batchId === selected.batchId).length : 1}
+              />
+            }
+          >
+            <GenerationCard key={selected.id} gen={selected} onRemix={remix} />
+          </Stage>
         ) : (
           <div className="flex flex-col gap-8">
             <header className="flex flex-col gap-2">
@@ -93,12 +137,13 @@ export function Workspace() {
       <p aria-live="polite" className="sr-only">{announcement}</p>
 
       {/* Control layer: floats over scrolling content. */}
-      <div className="sticky bottom-0 px-4 pb-4">
+      {/* Short viewports: cap the dock at half the screen so content stays reachable. */}
+      <div ref={dock} className="sticky bottom-0 px-4 pb-4 [@media(max-height:640px)]:max-h-[50dvh] [@media(max-height:640px)]:overflow-y-auto">
         <div className="mx-auto flex w-full max-w-2xl flex-col gap-2">
           {syncIssue && (
             <div role="status" className="glass flex items-start gap-2.5 rounded-xl border border-line px-3 py-2 text-sm text-fg">
               <CloudSlash size={16} className="mt-0.5 shrink-0 text-fg-muted" />
-              <span className="flex-1">{syncIssue}</span>
+              <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{syncIssue}</span>
               <button
                 type="button"
                 onClick={() => void refresh()}
@@ -110,20 +155,26 @@ export function Workspace() {
           )}
           {notice && (
             <p role="alert" className="glass flex items-start gap-2 rounded-xl border border-line px-3 py-2 text-sm text-fg">
-              <span className="flex-1">{notice}</span>
-              <button type="button" onClick={dismissNotice} aria-label="Dismiss" className="text-fg-muted hover:text-fg">
+              <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{notice}</span>
+              <button type="button" onClick={dismissNotice} aria-label="Dismiss" className="-my-0.5 grid size-6 shrink-0 place-items-center rounded-md text-fg-muted transition hover:bg-fg/[0.06] hover:text-fg">
                 <X size={14} />
               </button>
             </p>
           )}
           <PromptComposer prompt={prompt} onPromptChange={changePrompt} overrides={overrides} onOverridesChange={setOverrides} />
         </div>
-        {devConsole && (
+        {devConsole && !short && (
           <div className="mx-auto mt-2 w-full max-w-5xl">
             <DevConsole />
           </div>
         )}
       </div>
+      {/* On short screens the console scrolls with the page instead of riding in the sticky dock. */}
+      {devConsole && short && (
+        <div className="mx-auto w-full max-w-5xl px-4 pb-4">
+          <DevConsole />
+        </div>
+      )}
     </div>
   );
 }
