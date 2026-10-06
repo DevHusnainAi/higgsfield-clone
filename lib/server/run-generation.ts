@@ -3,10 +3,9 @@
 import { InferenceClient } from "@huggingface/inference";
 import type { FailureReason } from "../generation.ts";
 import type { AspectRatio, Intent } from "../intent.ts";
+import { DEFAULT_MODEL, MODELS } from "../models.ts";
 import { admin, BUCKET } from "./supabase.ts";
 
-export const IMAGE_MODEL = "stabilityai/stable-diffusion-3-medium-diffusers";
-export const VIDEO_MODEL = "Wan-AI/Wan2.2-TI2V-5B";
 const FPS = 24;
 /** Must stay under the route's maxDuration so we always get to settle the row. */
 export const RENDER_TIMEOUT_MS = 270_000;
@@ -24,27 +23,38 @@ function imageSize(ratio: AspectRatio) {
 
 async function render(intent: Intent, signal: AbortSignal): Promise<Blob> {
   const hf = new InferenceClient(process.env.HF_TOKEN);
-  if (intent.media === "image") {
-    return hf.textToImage(
-      { model: IMAGE_MODEL, provider: "hf-inference", inputs: intent.prompt, parameters: imageSize(intent.aspectRatio) },
-      { signal, outputType: "blob" },
-    );
+  const id = intent.model ?? DEFAULT_MODEL[intent.media];
+  const spec = MODELS[id];
+  // Only send what the user set; otherwise the provider's own defaults apply.
+  const common = {
+    ...(intent.seed != null && { seed: intent.seed }),
+    ...(intent.guidanceScale != null && spec.guidance && { guidance_scale: intent.guidanceScale }),
+  };
+  const size = imageSize(intent.aspectRatio);
+  const base = { model: spec.hfId, provider: spec.provider, inputs: intent.prompt };
+
+  switch (id) {
+    case "sd3-medium":
+      return hf.textToImage({ ...base, parameters: { ...size, ...common } }, { signal, outputType: "blob" });
+    case "flux-schnell":
+      // fal-ai receives parameters as-is (schema: fal.ai/models/fal-ai/flux/schnell/api).
+      return hf.textToImage({ ...base, parameters: { image_size: size, ...common } }, { signal, outputType: "blob" });
+    case "wan-2.2-5b":
+      // fal-ai receives parameters as-is (schema: fal.ai/models/fal-ai/wan/v2.2-5b/text-to-video/api).
+      return hf.textToVideo(
+        {
+          ...base,
+          parameters: {
+            num_frames: (intent.durationSec ?? 5) * FPS + 1,
+            frames_per_second: FPS,
+            aspect_ratio: intent.aspectRatio,
+            resolution: "720p",
+            ...common,
+          },
+        },
+        { signal },
+      );
   }
-  // fal-ai receives these parameters as-is (schema: fal.ai/models/fal-ai/wan/v2.2-5b/text-to-video/api).
-  return hf.textToVideo(
-    {
-      model: VIDEO_MODEL,
-      provider: "fal-ai",
-      inputs: intent.prompt,
-      parameters: {
-        num_frames: (intent.durationSec ?? 5) * FPS + 1,
-        frames_per_second: FPS,
-        aspect_ratio: intent.aspectRatio,
-        resolution: "720p",
-      },
-    },
-    { signal },
-  );
 }
 
 function reasonFor(err: unknown, signal: AbortSignal): FailureReason {

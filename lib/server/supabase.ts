@@ -16,6 +16,7 @@ export async function userIdFrom(req: Request): Promise<string | null> {
   const token = req.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1];
   if (!admin || !token) return null;
   const { data, error } = await admin.auth.getUser(token);
+  if (error) console.error(`[api] access token rejected: ${error.message}${error.code ? ` (${error.code})` : ""}`);
   return error ? null : data.user.id;
 }
 

@@ -22,26 +22,31 @@ export async function GET(req: Request) {
   const userId = await userIdFrom(req);
   if (!userId) return json({ error: "Unauthorized" }, 401);
 
-  await admin.rpc("fail_stale_generations", { p_user: userId, p_max_age: STALE_AFTER });
+  const sweep = await admin.rpc("fail_stale_generations", { p_user: userId, p_max_age: STALE_AFTER });
+  if (sweep.error) console.error("[api] stale sweep failed (is the migration applied?)", sweep.error.message);
   const { data, error } = await admin
     .from("generations")
     .select("*")
     .eq("user_id", userId)
     .order("created_at", { ascending: false })
     .limit(100);
-  if (error) return json({ error: "Could not load generations" }, 500);
+  if (error) {
+    console.error("[api] loading generations failed", error.message);
+    return json({ error: `Could not load generations: ${error.message}` }, 500);
+  }
 
   return json({ runs: (data as GenerationRow[]).map(toGeneration), balance: await balanceOf(userId) });
 }
 
-/** Start a generation. The intent and cost are computed here; the client only sends the prompt. */
+/** Start a generation. Intent and cost are computed here from the prompt + re-validated overrides. */
 export async function POST(req: Request) {
   if (!admin) return json({ error: "Server is not configured" }, 503);
   const userId = await userIdFrom(req);
   if (!userId) return json({ error: "Unauthorized" }, 401);
 
   const body: unknown = await req.json().catch(() => null);
-  const intent = parseIntent((body as { prompt?: unknown })?.prompt);
+  const { prompt, overrides } = (body ?? {}) as { prompt?: unknown; overrides?: unknown };
+  const intent = parseIntent(prompt, overrides);
   if (!intent.prompt) return json({ error: "Prompt is empty" }, 400);
   const cost = estimateCost(intent);
 
@@ -50,7 +55,8 @@ export async function POST(req: Request) {
     if (error.message.includes("insufficient_credits")) {
       return json({ error: "insufficient_credits", cost, balance: await balanceOf(userId) }, 402);
     }
-    return json({ error: "Could not start generation" }, 500);
+    console.error("[api] start_generation failed", error.message);
+    return json({ error: `Could not start generation: ${error.message}` }, 500);
   }
 
   const row = data as GenerationRow;

@@ -3,12 +3,12 @@
 // Local mode: renders are simulated in the browser and localStorage is the only store.
 import { useSyncExternalStore } from "react";
 import { estimateCost, simulateGeneration, transition, type Generation } from "./generation.ts";
-import type { Intent } from "./intent.ts";
-import { api, remoteEnabled } from "./remote.ts";
+import { OVERRIDE_KEYS, type Intent } from "./intent.ts";
+import { api, remoteEnabled, SyncError } from "./remote.ts";
 
 const KEY = remoteEnabled ? "studio.remote-cache.v1" : "studio.history.v1";
 const POLL_MS = 2000;
-const OFFLINE = "Offline. Showing your saved history; it will update when the connection is back.";
+const MAX_BACKOFF_MS = 60_000;
 const FAVORITES_KEY = "studio.favorites.v1";
 const MAX_RUNS = 100;
 const STATUSES = new Set(["queued", "generating", "done", "failed"]);
@@ -25,16 +25,22 @@ export interface StudioState {
   sessionStart: number;
   /** Account balance from the server; null in local mode. */
   balance: number | null;
-  /** One-line message for the user (offline, out of credits). */
+  /** One-line message about the user's last action (e.g. out of credits). */
   notice: string | null;
+  /** Why syncing with the server is failing, if it is. History stays readable from the cache. */
+  syncIssue: string | null;
 }
 
-const EMPTY: StudioState = { runs: [], favorites: [], selectedId: null, view: "create", sessionStart: 0, balance: null, notice: null };
+const EMPTY: StudioState = {
+  runs: [], favorites: [], selectedId: null, view: "create", sessionStart: 0, balance: null, notice: null, syncIssue: null,
+};
 let state: StudioState | null = null;
 const listeners = new Set<() => void>();
 const controllers = new Map<string, AbortController>();
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let synced = false;
+let inflight: Promise<void> | null = null;
+let failures = 0;
 
 const isActive = (g: Generation) => g.status === "queued" || g.status === "generating";
 
@@ -89,6 +95,11 @@ function subscribe(listener: () => void) {
   if (remoteEnabled && !synced) {
     synced = true;
     void refresh();
+    // Come back as soon as there's a reason to: network restored or the tab is looked at again.
+    window.addEventListener("online", () => void refresh());
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible" && getState().syncIssue) void refresh();
+    });
   }
   const onStorage = (e: StorageEvent) => {
     if (e.key === KEY) state = { ...getState(), runs: loadRuns() }; // another tab wrote
@@ -134,20 +145,45 @@ export function matchesFilter(gen: Generation, filter: LibraryFilter, favorites:
   return true;
 }
 
-/** Pull runs + balance from the server; keeps polling while anything is still rendering. */
-async function refresh() {
+function logSyncError(where: string, err: unknown) {
+  if (err instanceof SyncError) console.error(`[studio:sync] ${where} failed (${err.kind}): ${err.message}`, err.detail ?? "");
+  else console.error(`[studio:sync] ${where} failed (unexpected)`, err);
+}
+
+function schedule(ms: number) {
   if (pollTimer) clearTimeout(pollTimer);
-  pollTimer = null;
-  try {
-    const res = await api<{ runs: Generation[]; balance: number; error?: string }>("/api/generations");
-    if (!res.ok) throw new Error(res.data.error);
-    const { notice } = getState();
-    set({ runs: res.data.runs, balance: res.data.balance, notice: notice === OFFLINE ? null : notice });
-  } catch {
-    set({ notice: OFFLINE });
-  }
-  const { runs, notice } = getState();
-  if (runs.some(isActive) || notice === OFFLINE) pollTimer = setTimeout(refresh, POLL_MS);
+  pollTimer = setTimeout(() => void refresh(), ms);
+}
+
+/**
+ * Pull runs + balance from the server. Polls every 2s while something is rendering.
+ * On failure: retryable errors back off (2s, 4s, 8s... up to 60s); config/auth errors stop until a manual retry,
+ * the network returns, or the tab regains focus. The cached history stays on screen throughout.
+ */
+export function refresh(): Promise<void> {
+  inflight ??= (async () => {
+    if (pollTimer) clearTimeout(pollTimer);
+    pollTimer = null;
+    try {
+      const res = await api<{ runs: Generation[]; balance: number; error?: string }>("/api/generations");
+      if (!res.ok) throw new SyncError("server", `Unexpected response (${res.status}): ${res.data.error ?? "no details"}.`, res.data);
+      if (failures > 0) console.info(`[studio:sync] recovered after ${failures} failed attempt(s)`);
+      failures = 0;
+      set({ runs: res.data.runs, balance: res.data.balance, syncIssue: null });
+      if (res.data.runs.some(isActive)) schedule(POLL_MS);
+    } catch (err) {
+      failures++;
+      logSyncError("refresh", err);
+      const retry = !(err instanceof SyncError) || err.retry;
+      const delay = Math.min(MAX_BACKOFF_MS, POLL_MS * 2 ** failures);
+      const reason = err instanceof SyncError ? err.message : "Sync failed unexpectedly.";
+      set({ syncIssue: retry ? `${reason} Retrying in ${Math.round(delay / 1000)}s.` : reason });
+      if (retry) schedule(delay);
+    } finally {
+      inflight = null;
+    }
+  })();
+  return inflight;
 }
 
 export function dismissNotice() {
@@ -174,21 +210,25 @@ export function startGeneration(intent: Intent) {
 
 async function startRemote(intent: Intent) {
   try {
-    // The server re-parses the prompt and prices it; it never trusts a client-side cost.
+    // The server re-parses the prompt, re-validates these settings and prices it; it never trusts a client-side cost.
+    const overrides = Object.fromEntries(OVERRIDE_KEYS.map((k) => [k, intent[k]]));
     const res = await api<{ generation?: Generation; balance?: number; cost?: number; error?: string }>("/api/generations", {
       method: "POST",
-      body: JSON.stringify({ prompt: intent.prompt }),
+      body: JSON.stringify({ prompt: intent.prompt, overrides }),
     });
     if (res.status === 402) {
       set({ balance: res.data.balance ?? null, notice: `Not enough credits: this needs ${res.data.cost ?? estimateCost(intent)}, you have ${res.data.balance}. Nothing was charged.` });
       return;
     }
-    if (!res.ok || !res.data.generation) throw new Error(res.data.error);
+    if (!res.ok || !res.data.generation) throw new SyncError("server", `Couldn't start the generation: ${res.data.error ?? res.status}.`, res.data);
     upsert(res.data.generation);
     set({ selectedId: res.data.generation.id, view: "create", balance: res.data.balance ?? null, notice: null });
     void refresh();
-  } catch {
-    set({ notice: "Couldn't start the generation: the server didn't respond. Check your library before retrying." });
+  } catch (err) {
+    logSyncError("start", err);
+    // A dropped response may still have started (and held credits for) the run; the next refresh will show it.
+    set({ notice: `${err instanceof SyncError ? err.message : "Couldn't start the generation."} Check your library before retrying.` });
+    void refresh();
   }
 }
 
@@ -199,5 +239,8 @@ export function cancelGeneration(id: string) {
       if (res.data.generation) upsert(res.data.generation);
       if (typeof res.data.balance === "number") set({ balance: res.data.balance });
     })
-    .catch(() => set({ notice: "Couldn't reach the server to cancel. It will settle and refund automatically if it fails." }));
+    .catch((err) => {
+      logSyncError("cancel", err);
+      set({ notice: "Couldn't reach the server to cancel. If the render fails or stalls it is refunded automatically." });
+    });
 }

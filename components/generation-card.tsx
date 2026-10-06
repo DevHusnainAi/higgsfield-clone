@@ -1,12 +1,12 @@
 "use client";
 
-import { ArrowClockwise, X } from "@phosphor-icons/react";
-import { statusMessage, type Generation } from "@/lib/generation";
+import { ArrowClockwise, Shuffle, X } from "@phosphor-icons/react";
+import { estimateCost, statusMessage, type Generation } from "@/lib/generation";
 import { cancelGeneration, startGeneration, useStudio } from "@/lib/store";
 import { FavoriteButton } from "./favorite-button";
 import { ResultMedia } from "./result-media";
 
-export function GenerationCard({ gen }: { gen: Generation }) {
+export function GenerationCard({ gen, onRemix }: { gen: Generation; onRemix: (gen: Generation) => void }) {
   const { favorites } = useStudio();
   const running = gen.status === "queued" || gen.status === "generating";
   const [w, h] = gen.intent.aspectRatio.split(":").map(Number);
@@ -37,23 +37,32 @@ export function GenerationCard({ gen }: { gen: Generation }) {
             {gen.status === "done" && gen.intent.media === "video" && !/\.(mp4|webm)$/i.test(gen.resultUrl) && "Preview frame (local simulator)."}
           </p>
         </div>
-        {running && (
-          <button
-            onClick={() => cancelGeneration(gen.id)}
-            className="flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-line px-3 text-xs font-medium text-fg-muted transition hover:text-fg active:scale-[0.97]"
-          >
-            <X size={12} weight="bold" /> Cancel
-          </button>
-        )}
-        {gen.status === "done" && <FavoriteButton id={gen.id} active={favorites.includes(gen.id)} className="shrink-0" />}
-        {gen.status === "failed" && (
-          <button
-            onClick={() => startGeneration(gen.intent)}
-            className="flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-line px-3 text-xs font-medium text-fg transition hover:bg-surface-raised active:scale-[0.97]"
-          >
-            <ArrowClockwise size={12} weight="bold" /> Retry · {gen.credits.amount} credits
-          </button>
-        )}
+        <div className="flex shrink-0 items-center gap-2">
+          {running && (
+            <button
+              type="button"
+              onClick={() => cancelGeneration(gen.id)}
+              className="flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-line px-3 text-xs font-medium text-fg-muted transition hover:text-fg active:scale-[0.97]"
+            >
+              <X size={12} weight="bold" /> Cancel
+            </button>
+          )}
+          {!running && (
+            <button type="button" onClick={() => onRemix(gen)} title="Load this prompt and its settings into the composer" className="flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-line px-3 text-xs font-medium text-fg transition hover:border-line-strong active:scale-[0.97]">
+              <Shuffle size={12} weight="bold" /> Remix
+            </button>
+          )}
+          {gen.status === "done" && <FavoriteButton id={gen.id} active={favorites.includes(gen.id)} className="shrink-0" />}
+          {gen.status === "failed" && (
+            <button
+              type="button"
+              onClick={() => startGeneration(gen.intent)}
+              className="flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-line px-3 text-xs font-medium text-fg transition hover:bg-surface-raised active:scale-[0.97]"
+            >
+              <ArrowClockwise size={12} weight="bold" /> Retry · {estimateCost(gen.intent)} credits
+            </button>
+          )}
+        </div>
       </div>
 
       {gen.status === "generating" && (

@@ -1,6 +1,7 @@
 // Generation lifecycle: queued -> generating -> done | failed (always refunded).
 // Credits are held at submit, charged only on success, refunded on any failure.
-import type { AspectRatio, Intent } from "./intent";
+import { DURATION, type AspectRatio, type Intent, type IntentOverrides } from "./intent.ts";
+import { DEFAULT_MODEL, MODELS, modelsFor } from "./models.ts";
 
 export type FailureReason = "capacity" | "provider_error" | "timeout" | "cancelled" | "interrupted";
 
@@ -30,18 +31,43 @@ export type GenerationEvent =
   | { type: "complete"; resultUrl: string }
   | { type: "fail"; reason: FailureReason };
 
-// ponytail: mock rate card; replace with per-model pricing when a real provider is wired in
-export const CREDITS = { image: 4, videoPerSecond: 6 } as const;
+/** Older stored runs predate the model field; they priced as the media's default model. */
+const rateOf = (intent: Intent) => MODELS[intent.model ?? DEFAULT_MODEL[intent.media]].credits;
 
 export function estimateCost(intent: Intent): number {
-  return intent.media === "video" ? CREDITS.videoPerSecond * (intent.durationSec ?? 0) : CREDITS.image;
+  return intent.media === "video" ? rateOf(intent) * (intent.durationSec ?? 0) : rateOf(intent);
 }
 
 /** The math behind estimateCost, for display next to the price. */
 export function costBreakdown(intent: Intent): string {
   return intent.media === "video"
-    ? `${intent.durationSec ?? 0}s × ${CREDITS.videoPerSecond} credits/s`
-    : `1 image × ${CREDITS.image} credits`;
+    ? `${intent.durationSec ?? 0}s × ${rateOf(intent)} credits/s`
+    : `1 image × ${rateOf(intent)} credits`;
+}
+
+export interface CheaperOption {
+  label: string;
+  /** Merge into the current overrides to get this option. */
+  overrides: IntentOverrides;
+  cost: number;
+}
+
+/** When the balance can't cover `intent`, the closest affordable variants, most similar first. */
+export function cheaperAlternatives(intent: Intent, balance: number): CheaperOption[] {
+  const options: CheaperOption[] = [];
+  if (intent.media === "video" && intent.durationSec) {
+    const secs = Math.min(intent.durationSec - 1, Math.floor(balance / rateOf(intent)));
+    if (secs >= DURATION.min) options.push({ label: `Shorten to ${secs}s`, overrides: { durationSec: secs }, cost: secs * rateOf(intent) });
+  }
+  const cheaperImage = modelsFor("image")
+    .filter(([id, m]) => m.credits <= balance && (intent.media === "video" || m.credits < rateOf(intent)) && id !== intent.model)
+    .sort(([, a], [, b]) => b.credits - a.credits)[0];
+  if (cheaperImage) {
+    const [id, m] = cheaperImage;
+    const label = intent.media === "video" ? `Still image with ${m.label}` : `Use ${m.label}`;
+    options.push({ label, overrides: { media: "image", model: id }, cost: m.credits });
+  }
+  return options;
 }
 
 export function createGeneration(intent: Intent, now = Date.now()): Generation {

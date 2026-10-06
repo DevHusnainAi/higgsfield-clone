@@ -1,20 +1,37 @@
-// Rule-based prompt -> generation settings. Pure, never throws.
-// ponytail: regex rules, not NLP; swap parseIntent's body for an LLM call if rules stop scaling
+// Rule-based prompt -> generation settings, plus manual overrides. Pure, never throws.
+// The server runs the same function on untrusted overrides, so every value is re-validated here.
+// ponytail: regex rules, not NLP; swap the detection half for an LLM call if rules stop scaling
+import { DEFAULT_MODEL, isModelId, MAX_SEED, MODELS, type ModelId } from "./models.ts";
 
 export type MediaType = "image" | "video";
 
-export type CameraMove =
-  | "dolly-in" | "dolly-out"
-  | "pan" | "pan-left" | "pan-right"
-  | "tilt-up" | "tilt-down"
-  | "zoom-in" | "zoom-out"
-  | "crane-up" | "crane-down"
-  | "orbit" | "tracking" | "handheld" | "fpv" | "static";
+export const CAMERA_MOVES = [
+  "dolly-in", "dolly-out", "pan", "pan-left", "pan-right", "tilt-up", "tilt-down", "zoom-in", "zoom-out",
+  "crane-up", "crane-down", "orbit", "tracking", "handheld", "fpv", "static",
+] as const;
+export type CameraMove = (typeof CAMERA_MOVES)[number];
 
 export const ASPECT_RATIOS = ["1:1", "4:5", "3:4", "2:3", "9:16", "16:9", "4:3", "3:2", "21:9"] as const;
 export type AspectRatio = (typeof ASPECT_RATIOS)[number];
 
 export type IntentField = "media" | "camera" | "aspectRatio" | "durationSec";
+
+export interface IntentWarning {
+  field: IntentField | "prompt" | "model" | "guidanceScale";
+  message: string;
+}
+
+/** What a user can set by hand. A key that is absent means "let the prompt decide". */
+export interface IntentOverrides {
+  media?: MediaType;
+  camera?: CameraMove | null;
+  aspectRatio?: AspectRatio;
+  durationSec?: number;
+  model?: ModelId;
+  seed?: number | null;
+  guidanceScale?: number | null;
+}
+export const OVERRIDE_KEYS = ["media", "camera", "aspectRatio", "durationSec", "model", "seed", "guidanceScale"] as const;
 
 export interface Intent {
   /** Trimmed prompt, capped at MAX_PROMPT_LENGTH. */
@@ -24,16 +41,21 @@ export interface Intent {
   aspectRatio: AspectRatio;
   /** Seconds of output; null for images. */
   durationSec: number | null;
-  /** Prompt text each field was read from. Missing key = default value. */
+  model: ModelId;
+  /** null = random. */
+  seed: number | null;
+  /** null = model default. */
+  guidanceScale: number | null;
+  /** Prompt text each field was read from. Missing key = not from the prompt. */
   matched: Partial<Record<IntentField, string>>;
   /** Adjustments the user should see instead of having them happen silently. */
-  warnings: string[];
+  warnings: IntentWarning[];
 }
 
 export const MAX_PROMPT_LENGTH = 4000;
 // Model limits (Wan 2.2 5B on fal: 17-161 frames at 24fps; 16:9, 9:16 or 1:1 only).
 export const DURATION = { min: 2, max: 6, default: 5 } as const;
-const VIDEO_RATIOS: readonly AspectRatio[] = ["16:9", "9:16", "1:1"];
+export const VIDEO_RATIOS: readonly AspectRatio[] = ["16:9", "9:16", "1:1"];
 
 type Rule<T> = readonly [RegExp, T];
 
@@ -131,11 +153,29 @@ function findDuration(text: string): Hit<number> | null {
   return null;
 }
 
-export function parseIntent(input: unknown): Intent {
+/** Keeps only well-formed override values; anything else is dropped (treated as "auto"). */
+export function sanitizeOverrides(input: unknown): IntentOverrides {
+  const o = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+  const out: IntentOverrides = {};
+  if (o.media === "image" || o.media === "video") out.media = o.media;
+  if (o.camera === null || (CAMERA_MOVES as readonly unknown[]).includes(o.camera)) out.camera = o.camera as CameraMove | null;
+  if ((ASPECT_RATIOS as readonly unknown[]).includes(o.aspectRatio)) out.aspectRatio = o.aspectRatio as AspectRatio;
+  if (Number.isInteger(o.durationSec)) out.durationSec = o.durationSec as number;
+  if (isModelId(o.model)) out.model = o.model;
+  if (o.seed === null || (Number.isInteger(o.seed) && (o.seed as number) >= 0 && (o.seed as number) <= MAX_SEED)) out.seed = o.seed as number | null;
+  if (o.guidanceScale === null || (typeof o.guidanceScale === "number" && Number.isFinite(o.guidanceScale))) out.guidanceScale = o.guidanceScale;
+  return out;
+}
+
+const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
+
+export function parseIntent(input: unknown, overridesInput?: unknown): Intent {
+  const o = sanitizeOverrides(overridesInput);
   const raw = typeof input === "string" ? input.trim() : "";
-  const warnings: string[] = [];
+  const warnings: IntentWarning[] = [];
+  const warn = (field: IntentWarning["field"], message: string) => warnings.push({ field, message });
   const prompt = raw.slice(0, MAX_PROMPT_LENGTH);
-  if (raw.length > MAX_PROMPT_LENGTH) warnings.push(`Prompt trimmed to ${MAX_PROMPT_LENGTH} characters.`);
+  if (raw.length > MAX_PROMPT_LENGTH) warn("prompt", `Prompt trimmed to ${MAX_PROMPT_LENGTH} characters.`);
 
   const text = normalize(prompt);
   const matched: Intent["matched"] = {};
@@ -156,33 +196,48 @@ export function parseIntent(input: unknown): Intent {
     media = "video";
     matched.media = camera.text;
   }
+  if (o.media) media = o.media;
 
   let cameraMove: CameraMove | null = null;
-  if (camera && media === "video") {
-    cameraMove = camera.value;
-    matched.camera = camera.text;
-  } else if (camera) {
-    warnings.push(`Ignored "${camera.text}": camera moves only apply to video.`);
+  if (media === "video") {
+    if (o.camera !== undefined) cameraMove = o.camera;
+    else if (camera) cameraMove = camera.value;
+    if (camera) matched.camera = camera.text;
+  } else if (camera && o.camera === undefined) {
+    warn("camera", `Ignored "${camera.text}": camera moves only apply to video.`);
   }
 
   let durationSec: number | null = null;
   if (media === "video") {
-    durationSec = DURATION.default;
-    if (duration) {
-      durationSec = Math.min(DURATION.max, Math.max(DURATION.min, Math.round(duration.value)));
-      matched.durationSec = duration.text;
-      if (durationSec !== duration.value) warnings.push(`Duration set to ${durationSec}s (supported: ${DURATION.min}-${DURATION.max}s).`);
+    if (duration) matched.durationSec = duration.text;
+    const wanted = o.durationSec ?? (duration ? Math.round(duration.value) : DURATION.default);
+    durationSec = clamp(wanted, DURATION.min, DURATION.max);
+    if (durationSec !== (o.durationSec ?? duration?.value ?? durationSec)) {
+      warn("durationSec", `Duration set to ${durationSec}s (supported: ${DURATION.min}-${DURATION.max}s).`);
     }
   }
 
   const aspect = findRatio(text) ?? firstHit(text, ASPECT_WORDS);
   if (aspect) matched.aspectRatio = aspect.text;
-  let aspectRatio: AspectRatio = aspect?.value ?? (media === "video" ? "16:9" : "1:1");
+  let aspectRatio: AspectRatio = o.aspectRatio ?? aspect?.value ?? (media === "video" ? "16:9" : "1:1");
   if (media === "video" && !VIDEO_RATIOS.includes(aspectRatio)) {
     const [w, h] = aspectRatio.split(":").map(Number);
     const fitted = w > h ? "16:9" : "9:16";
-    warnings.push(`Video supports 16:9, 9:16 or 1:1, so ${aspectRatio} became ${fitted}.`);
+    warn("aspectRatio", `Video supports 16:9, 9:16 or 1:1, so ${aspectRatio} became ${fitted}.`);
     aspectRatio = fitted;
+  }
+
+  let model = DEFAULT_MODEL[media];
+  if (o.model && MODELS[o.model].media === media) model = o.model;
+  else if (o.model) warn("model", `${MODELS[o.model].label} makes ${MODELS[o.model].media}s, so ${MODELS[model].label} is used.`);
+
+  let guidanceScale: number | null = null;
+  const range = MODELS[model].guidance;
+  if (o.guidanceScale != null && !range) {
+    warn("guidanceScale", `${MODELS[model].label} has no guidance setting.`);
+  } else if (o.guidanceScale != null && range) {
+    guidanceScale = clamp(o.guidanceScale, range.min, range.max);
+    if (guidanceScale !== o.guidanceScale) warn("guidanceScale", `Guidance set to ${guidanceScale} (supported: ${range.min}-${range.max}).`);
   }
 
   return {
@@ -191,7 +246,22 @@ export function parseIntent(input: unknown): Intent {
     camera: cameraMove,
     aspectRatio,
     durationSec,
+    model,
+    seed: o.seed ?? null,
+    guidanceScale,
     matched,
     warnings,
   };
+}
+
+/** Overrides that rebuild `intent` from its prompt: only the values the parser wouldn't pick by itself. Seed is dropped so a remix varies. */
+export function remixOverrides(intent: Partial<Intent> & { prompt: string }): IntentOverrides {
+  const auto = parseIntent(intent.prompt);
+  const out: Record<string, unknown> = {};
+  for (const key of OVERRIDE_KEYS) {
+    if (key === "seed" || intent[key] === undefined || intent[key] === auto[key]) continue;
+    // Keep it only if it still changes the result under today's limits (an old 10s run is 6s now either way).
+    if (parseIntent(intent.prompt, { ...out, [key]: intent[key] })[key] !== auto[key]) out[key] = intent[key];
+  }
+  return sanitizeOverrides(out);
 }

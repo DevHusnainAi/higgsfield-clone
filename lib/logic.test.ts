@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseIntent } from "./intent.ts";
-import { createGeneration, simulateGeneration, statusMessage, transition, type Generation } from "./generation.ts";
+import { parseIntent, remixOverrides, sanitizeOverrides } from "./intent.ts";
+import { cheaperAlternatives, createGeneration, estimateCost, simulateGeneration, statusMessage, transition, type Generation } from "./generation.ts";
 
 test("parseIntent: reads media, camera, ratio, duration", () => {
   const cases: [string, Partial<ReturnType<typeof parseIntent>>][] = [
@@ -28,10 +28,10 @@ test("parseIntent: reads media, camera, ratio, duration", () => {
 
 test("parseIntent: explains adjustments instead of hiding them", () => {
   assert.equal(parseIntent("drone shot, 30 seconds").warnings.length, 1);
-  assert.match(parseIntent("drone shot, 4:5").warnings[0], /4:5 became 9:16/);
+  assert.match(parseIntent("drone shot, 4:5").warnings[0].message, /4:5 became 9:16/);
   const still = parseIntent("photo, slow pan left");
   assert.equal(still.camera, null);
-  assert.match(still.warnings[0], /only apply to video/);
+  assert.match(still.warnings[0].message, /only apply to video/);
   assert.equal(parseIntent("x".repeat(5000)).prompt.length, 4000);
 });
 
@@ -86,4 +86,46 @@ test("simulateGeneration: success charges, failure refunds, abort cancels", asyn
   const cancelled = await run(() => 0.5, ctrl.signal);
   assert.equal(cancelled.final.status === "failed" && cancelled.final.reason, "cancelled");
   assert.equal(cancelled.final.credits.state, "refunded");
+});
+
+test("overrides beat the parser, are re-validated, and replace stale warnings", () => {
+  const base = parseIntent("drone shot over cliffs, 30 seconds");
+  assert.equal(base.warnings.length, 1);
+  const o = parseIntent("drone shot over cliffs, 30 seconds", { durationSec: 4, aspectRatio: "9:16", camera: "orbit" });
+  assert.deepEqual([o.durationSec, o.aspectRatio, o.camera, o.warnings.length], [4, "9:16", "orbit", 0]);
+  // Switching to image drops video-only fields and picks the image default model.
+  const img = parseIntent("drone shot, 5s", { media: "image" });
+  assert.deepEqual([img.media, img.camera, img.durationSec, img.model], ["image", null, null, "sd3-medium"]);
+  // Out-of-range or wrong-media values are corrected with a visible reason.
+  const fixed = parseIntent("video of rain", { durationSec: 40, aspectRatio: "4:5", model: "flux-schnell", guidanceScale: 99 });
+  assert.deepEqual([fixed.durationSec, fixed.aspectRatio, fixed.model, fixed.guidanceScale], [6, "9:16", "wan-2.2-5b", 10]);
+  assert.deepEqual(fixed.warnings.map((w) => w.field).sort(), ["aspectRatio", "durationSec", "guidanceScale", "model"]);
+  assert.equal(parseIntent("photo", { model: "flux-schnell", guidanceScale: 5 }).guidanceScale, null);
+});
+
+test("sanitizeOverrides drops anything malformed (server trust boundary)", () => {
+  assert.deepEqual(sanitizeOverrides({ media: "gif", camera: "barrel-roll", aspectRatio: "5:7", durationSec: 2.5, model: "__proto__", seed: -1, guidanceScale: "7" }), {});
+  assert.deepEqual(sanitizeOverrides("nope"), {});
+  assert.deepEqual(sanitizeOverrides({ camera: null, seed: 42, model: "flux-schnell" }), { camera: null, seed: 42, model: "flux-schnell" });
+});
+
+test("remixOverrides rebuilds an intent from its prompt, minus the seed", () => {
+  const original = parseIntent("slow pan left over a lake, 5s", { aspectRatio: "9:16", seed: 7, guidanceScale: 5 });
+  const o = remixOverrides(original);
+  assert.deepEqual(o, { aspectRatio: "9:16", guidanceScale: 5 });
+  const again = parseIntent(original.prompt, o);
+  assert.deepEqual([again.aspectRatio, again.guidanceScale, again.camera, again.seed], ["9:16", 5, "pan-left", null]);
+  assert.deepEqual(remixOverrides({ prompt: "a photo" }), {}); // old runs without newer fields
+  // Stored under older limits (10s); clamps to what the parser picks anyway, so it is not a user choice.
+  assert.deepEqual(remixOverrides({ prompt: "drone shot, 10s", media: "video", durationSec: 10 }), {});
+});
+
+test("cheaperAlternatives offers affordable, closest-first options", () => {
+  const video = parseIntent("drone shot, 5s"); // 30 credits
+  assert.equal(estimateCost(video), 30);
+  const opts = cheaperAlternatives(video, 20);
+  assert.deepEqual(opts.map((o) => [o.label, o.cost]), [["Shorten to 3s", 18], ["Still image with Stable Diffusion 3 Medium", 4]]);
+  for (const opt of opts) assert.equal(estimateCost(parseIntent(video.prompt, opt.overrides)), opt.cost);
+  assert.deepEqual(cheaperAlternatives(parseIntent("a photo"), 3).map((o) => o.cost), [2]);
+  assert.deepEqual(cheaperAlternatives(parseIntent("a photo"), 1), []);
 });

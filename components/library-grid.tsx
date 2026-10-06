@@ -3,6 +3,7 @@
 import { ArrowCounterClockwise, FilmStrip, Heart, ImageSquare, SquaresFour } from "@phosphor-icons/react";
 import type { Generation } from "@/lib/generation";
 import { matchesFilter, select, setView, useStudio, type LibraryFilter } from "@/lib/store";
+import { Shuffle } from "@phosphor-icons/react";
 import { FavoriteButton } from "./favorite-button";
 import { ResultMedia } from "./result-media";
 
@@ -22,7 +23,7 @@ function tileMeta(gen: Generation): string {
   return "Queued";
 }
 
-export function LibraryGrid({ filter }: { filter: LibraryFilter }) {
+export function LibraryGrid({ filter, onRemix }: { filter: LibraryFilter; onRemix: (gen: Generation) => void }) {
   const { runs, favorites } = useStudio();
   const items = runs.filter((g) => matchesFilter(g, filter, favorites));
 
@@ -78,6 +79,17 @@ export function LibraryGrid({ filter }: { filter: LibraryFilter }) {
                   </span>
                 </span>
               </button>
+              {(gen.status === "done" || gen.status === "failed") && (
+                <button
+                  type="button"
+                  onClick={() => onRemix(gen)}
+                  aria-label="Remix"
+                  title="Remix"
+                  className="glass absolute left-2 top-2 grid size-8 place-items-center rounded-full border border-line text-fg-muted opacity-0 transition hover:text-fg focus-visible:opacity-100 group-hover:opacity-100 active:scale-[0.94]"
+                >
+                  <Shuffle size={14} weight="bold" />
+                </button>
+              )}
               {gen.status === "done" && (
                 <FavoriteButton
                   id={gen.id}
