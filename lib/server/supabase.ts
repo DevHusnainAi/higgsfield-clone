@@ -10,7 +10,25 @@ const secret = process.env.SUPABASE_SECRET_KEY;
 export const BUCKET = "generations";
 export const REFERENCES = "references";
 
-export const admin = url && secret ? createClient(url, secret, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
+/** Postgres role a Supabase API key runs as: new-style keys by prefix, legacy keys by their JWT `role` claim. */
+export function keyRole(key: string): string | null {
+  if (key.startsWith("sb_secret_")) return "service_role";
+  if (key.startsWith("sb_publishable_")) return "anon";
+  try {
+    return JSON.parse(Buffer.from(key.split(".")[1], "base64url").toString()).role ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// A publishable/anon key here makes every query run as `anon`, which the hardening migration locks out
+// ("permission denied for table generations"). Refuse it up front: the API then answers 503 "not configured".
+const secretOk = !!secret && keyRole(secret) === "service_role";
+if (secret && !secretOk) {
+  console.error(`[api] SUPABASE_SECRET_KEY is a ${keyRole(secret) ?? "unrecognised"} key, not the secret (service_role) key. Server API disabled.`);
+}
+
+export const admin = url && secretOk ? createClient(url, secret, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
 
 /** Verifies the caller's Supabase access token. Returns the user id, or null. */
 export async function userIdFrom(req: Request): Promise<string | null> {
