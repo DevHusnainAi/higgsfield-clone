@@ -191,6 +191,25 @@ test("references quota: the 11th file in a folder is rejected; other folders and
   await put(ALICE, 99, "generations");
 });
 
+test("fallback_refund migration refunds fallbacks charged before it, once", async () => {
+  const db = new PGlite();
+  await db.exec(STUBS);
+  const later = migrations.filter((f) => f >= "20261006180000");
+  for (const f of migrations.filter((f) => !later.includes(f))) await db.exec(readFileSync(new URL(f, dir), "utf8"));
+  await db.exec(`insert into auth.users values ('${ALICE}'); insert into public.user_credits (user_id, balance) values ('${ALICE}', 100);`);
+  // Legacy rows: a fallback charged by the old complete_generation, and an ordinary charged render.
+  const legacy = await start(db, ALICE, 8);
+  await db.query("select * from public.complete_generation($1, 'https://picsum.photos/x', true)", [legacy.id]);
+  const real = await start(db, ALICE, 4);
+  await db.query("select * from public.complete_generation($1, 'a/b.png')", [real.id]);
+  assert.equal(await balance(db, ALICE), 88);
+
+  for (const f of later) await db.exec(readFileSync(new URL(f, dir), "utf8"));
+  assert.equal(await balance(db, ALICE), 96); // the fallback's 8 came back; the real render stays charged
+  const rows = (await db.query<{ id: string; credit_state: string }>("select id, credit_state from public.generations")).rows;
+  assert.deepEqual(Object.fromEntries(rows.map((r) => [r.id, r.credit_state])), { [legacy.id]: "refunded", [real.id]: "charged" });
+});
+
 test("RLS: users read only their own rows and cannot write or call functions", async () => {
   const db = await setup();
   await start(db, ALICE, 4);
