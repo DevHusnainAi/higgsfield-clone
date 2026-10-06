@@ -2,7 +2,7 @@
 // Remote mode (Supabase env set): the API is the source of truth; localStorage is an offline cache.
 // Local mode: renders are simulated in the browser and localStorage is the only store.
 import { useSyncExternalStore } from "react";
-import { estimateCost, simulateGeneration, transition, type Generation } from "./generation.ts";
+import { estimateCost, simulateGeneration, splitBatch, transition, type Generation } from "./generation.ts";
 import { OVERRIDE_KEYS, type Intent } from "./intent.ts";
 import { api, remoteEnabled, SyncError } from "./remote.ts";
 
@@ -192,19 +192,24 @@ export function dismissNotice() {
 
 export function startGeneration(intent: Intent) {
   if (remoteEnabled) return void startRemote(intent);
-  const ctrl = new AbortController();
-  let first = true;
-  void simulateGeneration(intent, {
-    signal: ctrl.signal,
-    onUpdate: (gen) => {
-      if (first) {
-        first = false;
-        controllers.set(gen.id, ctrl);
-        set({ selectedId: gen.id, view: "create" });
-      }
-      upsert(gen);
-      if (gen.status === "done" || gen.status === "failed") controllers.delete(gen.id);
-    },
+  const batchId = crypto.randomUUID();
+  // Reversed so output 1 is upserted last and lands on top, matching the server's order.
+  splitBatch(intent).reverse().forEach((item, i, all) => {
+    const ctrl = new AbortController();
+    let first = true;
+    void simulateGeneration(item, {
+      signal: ctrl.signal,
+      batchId: all.length > 1 ? batchId : undefined,
+      onUpdate: (gen) => {
+        if (first) {
+          first = false;
+          controllers.set(gen.id, ctrl);
+          if (i === all.length - 1) set({ selectedId: gen.id, view: "create" });
+        }
+        upsert(gen);
+        if (gen.status === "done" || gen.status === "failed") controllers.delete(gen.id);
+      },
+    });
   });
 }
 
@@ -212,7 +217,7 @@ async function startRemote(intent: Intent) {
   try {
     // The server re-parses the prompt, re-validates these settings and prices it; it never trusts a client-side cost.
     const overrides = Object.fromEntries(OVERRIDE_KEYS.map((k) => [k, intent[k]]));
-    const res = await api<{ generation?: Generation; balance?: number; cost?: number; error?: string }>("/api/generations", {
+    const res = await api<{ generations?: Generation[]; balance?: number; cost?: number; error?: string }>("/api/generations", {
       method: "POST",
       body: JSON.stringify({ prompt: intent.prompt, overrides }),
     });
@@ -220,9 +225,10 @@ async function startRemote(intent: Intent) {
       set({ balance: res.data.balance ?? null, notice: `Not enough credits: this needs ${res.data.cost ?? estimateCost(intent)}, you have ${res.data.balance}. Nothing was charged.` });
       return;
     }
-    if (!res.ok || !res.data.generation) throw new SyncError("server", `Couldn't start the generation: ${res.data.error ?? res.status}.`, res.data);
-    upsert(res.data.generation);
-    set({ selectedId: res.data.generation.id, view: "create", balance: res.data.balance ?? null, notice: null });
+    const started = res.data.generations;
+    if (!res.ok || !started?.length) throw new SyncError("server", `Couldn't start the generation: ${res.data.error ?? res.status}.`, res.data);
+    started.toReversed().forEach(upsert);
+    set({ selectedId: started[0].id, view: "create", balance: res.data.balance ?? null, notice: null });
     void refresh();
   } catch (err) {
     logSyncError("start", err);

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseIntent, remixOverrides, sanitizeOverrides } from "./intent.ts";
-import { cheaperAlternatives, createGeneration, estimateCost, simulateGeneration, statusMessage, transition, type Generation } from "./generation.ts";
+import { cheaperAlternatives, costBreakdown, createGeneration, estimateCost, splitBatch, simulateGeneration, statusMessage, transition, type Generation } from "./generation.ts";
 
 test("parseIntent: reads media, camera, ratio, duration", () => {
   const cases: [string, Partial<ReturnType<typeof parseIntent>>][] = [
@@ -128,4 +128,18 @@ test("cheaperAlternatives offers affordable, closest-first options", () => {
   for (const opt of opts) assert.equal(estimateCost(parseIntent(video.prompt, opt.overrides)), opt.cost);
   assert.deepEqual(cheaperAlternatives(parseIntent("a photo"), 3).map((o) => o.cost), [2]);
   assert.deepEqual(cheaperAlternatives(parseIntent("a photo"), 1), []);
+});
+
+test("batch: cost scales with count, splits into seeded single outputs, degrades to fewer outputs", () => {
+  const four = parseIntent("a photo", { count: 4, seed: 10 });
+  assert.equal(estimateCost(four), 16);
+  assert.equal(costBreakdown(four), "4 images × 4 credits");
+  assert.equal(parseIntent("a photo", { count: 9 }).count, 4);
+  assert.equal(parseIntent("a photo").count, 1);
+  const items = splitBatch(four);
+  assert.deepEqual(items.map((i) => [i.count, i.seed, estimateCost(i)]), [[1, 10, 4], [1, 11, 4], [1, 12, 4], [1, 13, 4]]);
+  assert.ok(splitBatch(parseIntent("a photo", { count: 2 })).every((i) => i.seed === null));
+  const [fewer] = cheaperAlternatives(four, 10);
+  assert.deepEqual([fewer.label, fewer.cost], ["Generate 2 images instead", 8]);
+  for (const opt of cheaperAlternatives(four, 10)) assert.ok(estimateCost(parseIntent("a photo", { ...four, ...opt.overrides, seed: 10 })) <= 10);
 });

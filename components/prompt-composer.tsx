@@ -74,7 +74,7 @@ export function PromptComposer({
 
       {short && (
         <div role="status" className="flex flex-wrap items-center gap-2 border-t border-line px-2 pb-1 pt-2.5 text-xs text-fg-muted">
-          {alternatives.length ? <span>Fits your balance:</span> : <span>Nothing fits your {balance} credits yet.</span>}
+          {alternatives.length ? <span>Not enough credits. Instead:</span> : <span>Nothing fits your {balance} credits yet.</span>}
           {alternatives.map((alt) => (
             <button
               key={alt.label}

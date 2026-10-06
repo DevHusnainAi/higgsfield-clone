@@ -2,12 +2,13 @@
 
 import { ArrowClockwise, Shuffle, X } from "@phosphor-icons/react";
 import { estimateCost, statusMessage, type Generation } from "@/lib/generation";
-import { cancelGeneration, startGeneration, useStudio } from "@/lib/store";
+import { cancelGeneration, select, startGeneration, useStudio } from "@/lib/store";
 import { FavoriteButton } from "./favorite-button";
 import { ResultMedia } from "./result-media";
 
 export function GenerationCard({ gen, onRemix }: { gen: Generation; onRemix: (gen: Generation) => void }) {
-  const { favorites } = useStudio();
+  const { favorites, runs } = useStudio();
+  const batch = gen.batchId ? runs.filter((g) => g.batchId === gen.batchId) : [];
   const running = gen.status === "queued" || gen.status === "generating";
   const [w, h] = gen.intent.aspectRatio.split(":").map(Number);
 
@@ -24,6 +25,29 @@ export function GenerationCard({ gen, onRemix }: { gen: Generation; onRemix: (ge
           ) : (
             <div className="shimmer absolute inset-0" />
           )}
+        </div>
+      )}
+
+      {batch.length > 1 && (
+        <div role="group" aria-label="Outputs from this run" className="flex justify-center gap-2">
+          {batch.map((g, i) => (
+            <button
+              key={g.id}
+              type="button"
+              onClick={() => select(g.id)}
+              aria-label={`Output ${i + 1} of ${batch.length}`}
+              aria-current={g.id === gen.id}
+              className="relative size-12 overflow-hidden rounded-lg border border-line bg-surface opacity-60 transition hover:opacity-100 active:scale-[0.96] aria-[current=true]:border-accent aria-[current=true]:opacity-100"
+            >
+              {g.status === "done" ? (
+                <ResultMedia url={g.resultUrl} alt="" sizes="48px" />
+              ) : g.status === "failed" ? (
+                <X size={14} className="absolute inset-0 m-auto text-danger" />
+              ) : (
+                <div className="shimmer absolute inset-0" />
+              )}
+            </button>
+          ))}
         </div>
       )}
 

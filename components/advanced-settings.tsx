@@ -1,11 +1,12 @@
 "use client";
 
 import { DiceFive, SlidersHorizontal } from "@phosphor-icons/react";
-import type { Intent, IntentOverrides } from "@/lib/intent";
+import { COUNT, type Intent, type IntentOverrides } from "@/lib/intent";
 import { DEFAULT_MODEL, MAX_SEED, MODELS, modelsFor, type ModelId } from "@/lib/models";
 import { anchor, anchoredTo, popoverClass } from "./param-chips";
 
-const ADVANCED_KEYS = ["model", "seed", "guidanceScale"] as const;
+const ADVANCED_KEYS = ["count", "model", "seed", "guidanceScale"] as const;
+const COUNTS = Array.from({ length: COUNT.max - COUNT.min + 1 }, (_, i) => COUNT.min + i);
 
 const inputClass =
   "h-9 w-full rounded-lg border border-line-strong bg-bg px-2.5 text-sm text-fg outline-none transition focus:border-fg-muted";
@@ -62,6 +63,29 @@ export function AdvancedSettings({
         </div>
 
         <div className="flex flex-col gap-4">
+          <fieldset className="flex flex-col gap-1.5">
+            <legend className="pb-1.5 text-xs font-medium text-fg-muted">Output count</legend>
+            <div className="grid grid-cols-4 gap-1 rounded-lg border border-line-strong p-0.5">
+              {COUNTS.map((n) => (
+                <label
+                  key={n}
+                  className="grid h-8 cursor-pointer place-items-center rounded-md text-sm tabular-nums text-fg-muted transition hover:text-fg has-checked:bg-fg/10 has-checked:text-fg has-focus-visible:outline-2 has-focus-visible:outline-accent"
+                >
+                  <input
+                    type="radio"
+                    name="adv-count"
+                    value={n}
+                    checked={intent.count === n}
+                    onChange={() => (n === COUNT.min ? set({}, ["count"]) : set({ count: n }))}
+                    className="sr-only"
+                  />
+                  {n}
+                </label>
+              ))}
+            </div>
+            <p className="text-xs text-fg-muted">Each output is a separate render, charged only if it finishes.</p>
+          </fieldset>
+
           <div className="flex flex-col gap-1.5">
             <label htmlFor="adv-model" className="text-xs font-medium text-fg-muted">
               Model
@@ -114,7 +138,7 @@ export function AdvancedSettings({
                 <DiceFive size={16} />
               </button>
             </div>
-            <p className="text-xs text-fg-muted">Same seed + same settings = the same result.</p>
+            <p className="text-xs text-fg-muted">Same seed + same settings = the same result.{intent.count > 1 && " Each extra output uses the next seed."}</p>
           </div>
 
           <div className="flex flex-col gap-1.5">

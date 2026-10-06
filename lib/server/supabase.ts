@@ -24,6 +24,8 @@ export interface GenerationRow {
   id: string;
   user_id: string;
   intent: Intent;
+  batch_id: string | null;
+  batch_index: number;
   status: Generation["status"];
   progress: number;
   credits_amount: number;
@@ -35,7 +37,7 @@ export interface GenerationRow {
 }
 
 export function toGeneration(r: GenerationRow): Generation {
-  const base = { id: r.id, intent: r.intent, createdAt: Date.parse(r.created_at), updatedAt: Date.parse(r.updated_at) };
+  const base = { id: r.id, intent: r.intent, batchId: r.batch_id ?? undefined, createdAt: Date.parse(r.created_at), updatedAt: Date.parse(r.updated_at) };
   const amount = r.credits_amount;
   switch (r.status) {
     case "queued":
@@ -58,3 +60,4 @@ export function toGeneration(r: GenerationRow): Generation {
       };
   }
 }
+

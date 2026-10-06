@@ -1,13 +1,15 @@
 // Generation lifecycle: queued -> generating -> done | failed (always refunded).
 // Credits are held at submit, charged only on success, refunded on any failure.
 import { DURATION, type AspectRatio, type Intent, type IntentOverrides } from "./intent.ts";
-import { DEFAULT_MODEL, MODELS, modelsFor } from "./models.ts";
+import { DEFAULT_MODEL, MAX_SEED, MODELS, modelsFor } from "./models.ts";
 
 export type FailureReason = "capacity" | "provider_error" | "timeout" | "cancelled" | "interrupted";
 
 interface Base {
   id: string;
   intent: Intent;
+  /** Shared by the outputs of one multi-output run. */
+  batchId?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -34,15 +36,30 @@ export type GenerationEvent =
 /** Older stored runs predate the model field; they priced as the media's default model. */
 const rateOf = (intent: Intent) => MODELS[intent.model ?? DEFAULT_MODEL[intent.media]].credits;
 
+/** Older stored runs predate count; they were single outputs. */
+const countOf = (intent: Intent) => intent.count ?? 1;
+const unitCost = (intent: Intent) => (intent.media === "video" ? rateOf(intent) * (intent.durationSec ?? 0) : rateOf(intent));
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
 export function estimateCost(intent: Intent): number {
-  return intent.media === "video" ? rateOf(intent) * (intent.durationSec ?? 0) : rateOf(intent);
+  return unitCost(intent) * countOf(intent);
 }
 
 /** The math behind estimateCost, for display next to the price. */
 export function costBreakdown(intent: Intent): string {
+  const n = countOf(intent);
   return intent.media === "video"
-    ? `${intent.durationSec ?? 0}s × ${rateOf(intent)} credits/s`
-    : `1 image × ${rateOf(intent)} credits`;
+    ? `${n > 1 ? `${n} videos × ` : ""}${intent.durationSec ?? 0}s × ${rateOf(intent)} credits/s`
+    : `${plural(n, "image")} × ${rateOf(intent)} credits`;
+}
+
+/** One single-output intent per requested output. A fixed seed steps by 1 so the outputs differ but stay reproducible. */
+export function splitBatch(intent: Intent): Intent[] {
+  return Array.from({ length: countOf(intent) }, (_, i) => ({
+    ...intent,
+    count: 1,
+    seed: intent.seed == null ? null : (intent.seed + i) % (MAX_SEED + 1),
+  }));
 }
 
 export interface CheaperOption {
@@ -55,26 +72,32 @@ export interface CheaperOption {
 /** When the balance can't cover `intent`, the closest affordable variants, most similar first. */
 export function cheaperAlternatives(intent: Intent, balance: number): CheaperOption[] {
   const options: CheaperOption[] = [];
+  const n = countOf(intent);
+  const fewer = Math.min(n - 1, Math.floor(balance / unitCost(intent)));
+  if (fewer >= 1) {
+    options.push({ label: `Generate ${plural(fewer, intent.media)} instead`, overrides: { count: fewer }, cost: fewer * unitCost(intent) });
+  }
   if (intent.media === "video" && intent.durationSec) {
-    const secs = Math.min(intent.durationSec - 1, Math.floor(balance / rateOf(intent)));
-    if (secs >= DURATION.min) options.push({ label: `Shorten to ${secs}s`, overrides: { durationSec: secs }, cost: secs * rateOf(intent) });
+    const secs = Math.min(intent.durationSec - 1, Math.floor(balance / (rateOf(intent) * n)));
+    if (secs >= DURATION.min) options.push({ label: `Shorten to ${secs}s`, overrides: { durationSec: secs }, cost: secs * rateOf(intent) * n });
   }
   const cheaperImage = modelsFor("image")
-    .filter(([id, m]) => m.credits <= balance && (intent.media === "video" || m.credits < rateOf(intent)) && id !== intent.model)
+    .filter(([id, m]) => m.credits * n <= balance && (intent.media === "video" || m.credits < rateOf(intent)) && id !== intent.model)
     .sort(([, a], [, b]) => b.credits - a.credits)[0];
   if (cheaperImage) {
     const [id, m] = cheaperImage;
-    const label = intent.media === "video" ? `Still image with ${m.label}` : `Use ${m.label}`;
-    options.push({ label, overrides: { media: "image", model: id }, cost: m.credits });
+    const label = intent.media === "video" ? `Still ${n > 1 ? "images" : "image"} with ${m.label}` : `Use ${m.label}`;
+    options.push({ label, overrides: { media: "image", model: id }, cost: m.credits * n });
   }
   return options;
 }
 
-export function createGeneration(intent: Intent, now = Date.now()): Generation {
+export function createGeneration(intent: Intent, now = Date.now(), batchId?: string): Generation {
   if (!intent.prompt) throw new RangeError("Cannot generate from an empty prompt.");
   return {
     id: crypto.randomUUID(),
     intent,
+    batchId,
     status: "queued",
     queuePosition: 1,
     credits: { amount: estimateCost(intent), state: "held" },
@@ -88,9 +111,9 @@ export function transition(gen: Generation, event: GenerationEvent, now = Date.n
   if (gen.status === "done" || gen.status === "failed") return gen;
 
   if (event.type === "fail") {
-    const { id, intent, createdAt, credits } = gen;
+    const { id, intent, batchId, createdAt, credits } = gen;
     return {
-      id, intent, createdAt,
+      id, intent, batchId, createdAt,
       updatedAt: now,
       status: "failed",
       reason: event.reason,
@@ -101,8 +124,8 @@ export function transition(gen: Generation, event: GenerationEvent, now = Date.n
   if (gen.status === "queued") {
     if (event.type === "queue_update") return { ...gen, queuePosition: Math.max(1, event.position), updatedAt: now };
     if (event.type === "start") {
-      const { id, intent, createdAt, credits } = gen;
-      return { id, intent, createdAt, credits, updatedAt: now, status: "generating", progress: 0 };
+      const { id, intent, batchId, createdAt, credits } = gen;
+      return { id, intent, batchId, createdAt, credits, updatedAt: now, status: "generating", progress: 0 };
     }
     return gen;
   }
@@ -113,9 +136,9 @@ export function transition(gen: Generation, event: GenerationEvent, now = Date.n
     return { ...gen, progress, updatedAt: now };
   }
   if (event.type === "complete") {
-    const { id, intent, createdAt, credits } = gen;
+    const { id, intent, batchId, createdAt, credits } = gen;
     return {
-      id, intent, createdAt,
+      id, intent, batchId, createdAt,
       updatedAt: now,
       status: "done",
       resultUrl: event.resultUrl,
@@ -177,13 +200,14 @@ export interface SimulateOptions {
   /** Injectable for deterministic tests. */
   random?: () => number;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  batchId?: string;
 }
 
 export async function simulateGeneration(intent: Intent, opts: SimulateOptions = {}): Promise<Generation> {
   const rand = opts.random ?? Math.random;
   const sleep = opts.sleep ?? sleepFor;
   const startedAt = Date.now();
-  let gen = createGeneration(intent);
+  let gen = createGeneration(intent, Date.now(), opts.batchId);
   const emit = (event: GenerationEvent) => {
     gen = transition(gen, event);
     opts.onUpdate?.(gen);

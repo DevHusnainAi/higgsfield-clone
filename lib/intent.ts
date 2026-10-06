@@ -30,8 +30,9 @@ export interface IntentOverrides {
   model?: ModelId;
   seed?: number | null;
   guidanceScale?: number | null;
+  count?: number;
 }
-export const OVERRIDE_KEYS = ["media", "camera", "aspectRatio", "durationSec", "model", "seed", "guidanceScale"] as const;
+export const OVERRIDE_KEYS = ["media", "camera", "aspectRatio", "durationSec", "model", "seed", "guidanceScale", "count"] as const;
 
 export interface Intent {
   /** Trimmed prompt, capped at MAX_PROMPT_LENGTH. */
@@ -46,6 +47,8 @@ export interface Intent {
   seed: number | null;
   /** null = model default. */
   guidanceScale: number | null;
+  /** Outputs in one run (COUNT.min-COUNT.max). Each output is its own generation. */
+  count: number;
   /** Prompt text each field was read from. Missing key = not from the prompt. */
   matched: Partial<Record<IntentField, string>>;
   /** Adjustments the user should see instead of having them happen silently. */
@@ -56,6 +59,7 @@ export const MAX_PROMPT_LENGTH = 4000;
 // Model limits (Wan 2.2 5B on fal: 17-161 frames at 24fps; 16:9, 9:16 or 1:1 only).
 export const DURATION = { min: 2, max: 6, default: 5 } as const;
 export const VIDEO_RATIOS: readonly AspectRatio[] = ["16:9", "9:16", "1:1"];
+export const COUNT = { min: 1, max: 4 } as const;
 
 type Rule<T> = readonly [RegExp, T];
 
@@ -164,6 +168,7 @@ export function sanitizeOverrides(input: unknown): IntentOverrides {
   if (isModelId(o.model)) out.model = o.model;
   if (o.seed === null || (Number.isInteger(o.seed) && (o.seed as number) >= 0 && (o.seed as number) <= MAX_SEED)) out.seed = o.seed as number | null;
   if (o.guidanceScale === null || (typeof o.guidanceScale === "number" && Number.isFinite(o.guidanceScale))) out.guidanceScale = o.guidanceScale;
+  if (Number.isInteger(o.count)) out.count = o.count as number;
   return out;
 }
 
@@ -249,6 +254,7 @@ export function parseIntent(input: unknown, overridesInput?: unknown): Intent {
     model,
     seed: o.seed ?? null,
     guidanceScale,
+    count: clamp(o.count ?? COUNT.min, COUNT.min, COUNT.max),
     matched,
     warnings,
   };

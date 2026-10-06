@@ -37,7 +37,7 @@ const one = async <T>(db: PGlite, sql: string, params: unknown[] = []) => (await
 const balance = async (db: PGlite, user: string) =>
   (await one<{ b: number }>(db, "select public.get_balance($1) as b", [user])).b;
 const start = (db: PGlite, user: string, cost: number) =>
-  one<{ id: string; status: string; credit_state: string }>(db, "select * from public.start_generation($1, '{}'::jsonb, $2)", [user, cost]);
+  one<{ id: string; status: string; credit_state: string }>(db, "select * from public.start_generation($1, '[{}]'::jsonb, $2)", [user, cost]);
 
 test("start holds credits; insufficient balance is rejected without a row", async () => {
   const db = await setup();
@@ -83,6 +83,27 @@ test("stale sweep fails and refunds only old active rows", async () => {
   await db.query("update public.generations set created_at = now() - interval '1 hour' where id = $1", [old.id]);
   assert.equal((await one<{ n: number }>(db, "select public.fail_stale_generations($1, interval '10 minutes') as n", [ALICE])).n, 1);
   assert.equal(await balance(db, ALICE), 170);
+});
+
+test("batch holds every output at once, all or nothing; outputs settle independently", async () => {
+  const db = await setup();
+  const intents = JSON.stringify([{ seed: 1 }, { seed: 2 }, { seed: 3 }]);
+  const rows = (await db.query<{ id: string; batch_id: string; batch_index: number; credits_amount: number; intent: { seed: number } }>(
+    "select * from public.start_generation($1, $2::jsonb, 4) order by batch_index", [ALICE, intents])).rows;
+  assert.equal(rows.length, 3);
+  assert.equal(new Set(rows.map((r) => r.batch_id)).size, 1);
+  assert.deepEqual(rows.map((r) => [r.batch_index, r.credits_amount, r.intent.seed]), [[0, 4, 1], [1, 4, 2], [2, 4, 3]]);
+  assert.equal(await balance(db, ALICE), 188);
+
+  await db.query("select * from public.fail_generation($1, 'capacity')", [rows[1].id]);
+  assert.equal(await balance(db, ALICE), 192); // only that output's share comes back
+
+  // 4 x 60 = 240 > 192: nothing held, no rows. More than 4 outputs or a non-array is refused.
+  await assert.rejects(db.query("select * from public.start_generation($1, '[{},{},{},{}]'::jsonb, 60)", [ALICE]), /insufficient_credits/);
+  await assert.rejects(db.query("select * from public.start_generation($1, '[{},{},{},{},{}]'::jsonb, 1)", [ALICE]), /invalid_count/);
+  await assert.rejects(db.query("select * from public.start_generation($1, '{}'::jsonb, 1)", [ALICE]), /invalid_count/);
+  assert.equal(await balance(db, ALICE), 192);
+  assert.equal((await one<{ n: number }>(db, "select count(*)::int as n from public.generations")).n, 3);
 });
 
 test("RLS: users read only their own rows and cannot write or call functions", async () => {

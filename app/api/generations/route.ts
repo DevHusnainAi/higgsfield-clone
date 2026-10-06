@@ -1,5 +1,5 @@
 import { after } from "next/server";
-import { estimateCost } from "@/lib/generation";
+import { estimateCost, splitBatch } from "@/lib/generation";
 import { parseIntent } from "@/lib/intent";
 import { runGeneration } from "@/lib/server/run-generation";
 import { admin, toGeneration, userIdFrom, type GenerationRow } from "@/lib/server/supabase";
@@ -29,6 +29,7 @@ export async function GET(req: Request) {
     .select("*")
     .eq("user_id", userId)
     .order("created_at", { ascending: false })
+    .order("batch_index")
     .limit(100);
   if (error) {
     console.error("[api] loading generations failed", error.message);
@@ -38,7 +39,7 @@ export async function GET(req: Request) {
   return json({ runs: (data as GenerationRow[]).map(toGeneration), balance: await balanceOf(userId) });
 }
 
-/** Start a generation. Intent and cost are computed here from the prompt + re-validated overrides. */
+/** Start a run of 1-4 outputs. Intent and cost are computed here from the prompt + re-validated overrides. */
 export async function POST(req: Request) {
   if (!admin) return json({ error: "Server is not configured" }, 503);
   const userId = await userIdFrom(req);
@@ -48,9 +49,11 @@ export async function POST(req: Request) {
   const { prompt, overrides } = (body ?? {}) as { prompt?: unknown; overrides?: unknown };
   const intent = parseIntent(prompt, overrides);
   if (!intent.prompt) return json({ error: "Prompt is empty" }, 400);
+  const items = splitBatch(intent);
   const cost = estimateCost(intent);
 
-  const { data, error } = await admin.rpc("start_generation", { p_user: userId, p_intent: intent, p_cost: cost });
+  // Holds credits for every output in one transaction: all rows are created, or none.
+  const { data, error } = await admin.rpc("start_generation", { p_user: userId, p_intents: items, p_cost: estimateCost(items[0]) });
   if (error) {
     if (error.message.includes("insufficient_credits")) {
       return json({ error: "insufficient_credits", cost, balance: await balanceOf(userId) }, 402);
@@ -59,7 +62,8 @@ export async function POST(req: Request) {
     return json({ error: `Could not start generation: ${error.message}` }, 500);
   }
 
-  const row = data as GenerationRow;
-  after(() => runGeneration(row));
-  return json({ generation: toGeneration(row), balance: await balanceOf(userId) }, 201);
+  const rows = (data as GenerationRow[]).sort((a, b) => a.batch_index - b.batch_index);
+  // ponytail: one provider call per output, in parallel; the HF client returns only the first image of a batched call
+  after(() => Promise.all(rows.map(runGeneration)));
+  return json({ generations: rows.map(toGeneration), balance: await balanceOf(userId) }, 201);
 }
