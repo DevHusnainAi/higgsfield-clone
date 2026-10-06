@@ -11,7 +11,7 @@ import { GenerationCard } from "./generation-card";
 import { LibraryGrid } from "./library-grid";
 import { PipelineStepper } from "./pipeline-stepper";
 import { PromptComposer } from "./prompt-composer";
-import { StarterCards } from "./starter-cards";
+import { InspirationFeed, remixable } from "./inspiration-feed";
 
 const focusPrompt = () => document.getElementById("prompt")?.focus();
 
@@ -24,7 +24,9 @@ export function Workspace() {
   const devConsole = useDevConsoleOpen();
   const [prompt, setPrompt] = useState("");
   const [overrides, setOverrides] = useState<IntentOverrides>({});
+  const [announcement, setAnnouncement] = useState("");
   const selected = runs.find((g) => g.id === selectedId);
+  const empty = view === "create" && !pending && !selected;
 
   // "/" focuses the prompt from anywhere. Esc already closes the Advanced and Start frame popovers natively.
   useEffect(() => {
@@ -42,10 +44,16 @@ export function Workspace() {
     if (!p.trim()) setOverrides((o) => (o.reference ? { reference: o.reference } : {})); // a cleared prompt starts fresh, but keeps an uploaded frame
   }
 
-  function pick(example: string) {
+  function pick(example: string, labels: string[]) {
     setPrompt(example);
     setOverrides({});
     focusPrompt();
+    // The click has to visibly land somewhere: flash the composer border. Colour only, so it's fine under reduced motion.
+    document.getElementById("prompt")?.closest("form")?.animate(
+      [{ borderColor: "var(--accent)" }, { borderColor: "var(--accent)", offset: 0.4 }, {}],
+      { duration: 900, easing: "ease-out" },
+    );
+    setAnnouncement(`Preset loaded: ${labels.join(", ")}`);
   }
 
   /** Back into the composer with the same settings (minus the seed), so the parser re-reads it. */
@@ -62,7 +70,7 @@ export function Workspace() {
       style={{ "--media-h": devConsole ? "26dvh" : "50dvh" } as CSSProperties}
       className="flex min-h-[calc(100dvh-3.5rem)] flex-1 flex-col md:min-h-[100dvh]"
     >
-      <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center-safe gap-6 px-4 pb-10 pt-12">
+      <div className={`mx-auto flex w-full flex-1 flex-col justify-center-safe gap-6 px-4 pb-10 pt-12 ${empty ? "max-w-6xl" : "max-w-3xl"}`}>
         {view !== "create" ? (
           <LibraryGrid filter={view} onRemix={remix} />
         ) : pending ? (
@@ -70,15 +78,19 @@ export function Workspace() {
         ) : selected ? (
           <GenerationCard key={selected.id} gen={selected} onRemix={remix} />
         ) : (
-          <div className="flex flex-col items-center gap-6 text-center">
-            <h1 className="text-3xl font-semibold tracking-tight text-balance md:text-4xl">What are you making?</h1>
-            <p className="max-w-[48ch] text-sm leading-relaxed text-fg-muted">
-              Describe it in plain words. Format, camera and length are read from your prompt, and the cost shows before you run it.
-            </p>
-            <StarterCards onPick={pick} />
+          <div className="flex flex-col gap-8">
+            <header className="flex flex-col gap-2">
+              <h1 className="text-2xl font-semibold tracking-display text-balance md:text-3xl">What are you making?</h1>
+              <p className="max-w-[60ch] text-ui text-fg-muted">
+                Describe it in plain words. Format, camera and length are read from your prompt, and the cost shows before you run it.
+              </p>
+            </header>
+            <InspirationFeed recent={remixable(runs)} onPick={pick} onRemix={remix} />
           </div>
         )}
       </div>
+
+      <p aria-live="polite" className="sr-only">{announcement}</p>
 
       {/* Control layer: floats over scrolling content. */}
       <div className="sticky bottom-0 px-4 pb-4">

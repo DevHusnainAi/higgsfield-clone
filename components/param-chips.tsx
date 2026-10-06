@@ -9,7 +9,7 @@ import {
 
 type Value = string | number | null;
 
-const title = (s: string) => (s === "fpv" ? "FPV drone" : s.charAt(0).toUpperCase() + s.slice(1).replace("-", " "));
+export const title = (s: string) => (s === "fpv" ? "FPV drone" : s.charAt(0).toUpperCase() + s.slice(1).replace("-", " "));
 
 const FIELD_LABEL: Record<IntentField, string> = { media: "Format", camera: "Camera", aspectRatio: "Aspect ratio", durationSec: "Duration" };
 
