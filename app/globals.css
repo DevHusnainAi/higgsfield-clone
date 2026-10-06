@@ -76,6 +76,11 @@ body {
   }
 }
 
+/* Lock page scroll behind the open mobile drawer. */
+html:has(dialog[open]:modal) {
+  overflow: hidden;
+}
+
 /* Skeleton sweep while a generation runs; static under reduced motion. */
 .shimmer {
   background: linear-gradient(100deg, transparent 30%, color-mix(in oklch, var(--fg) 6%, transparent) 50%, transparent 70%) var(--surface);

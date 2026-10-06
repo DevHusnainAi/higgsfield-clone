@@ -102,7 +102,7 @@ export function transition(gen: Generation, event: GenerationEvent, now = Date.n
 const FAILURE_TEXT: Record<FailureReason, string> = {
   capacity: "The render queue is full right now",
   provider_error: "The model returned an error",
-  timeout: "This took longer than our 2 minute limit",
+  timeout: "The model took too long to respond",
   cancelled: "You cancelled this generation",
   interrupted: "The page closed before this finished",
 };

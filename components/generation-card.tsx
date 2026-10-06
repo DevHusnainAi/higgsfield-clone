@@ -1,10 +1,10 @@
 "use client";
 
-import Image from "next/image";
 import { ArrowClockwise, X } from "@phosphor-icons/react";
 import { statusMessage, type Generation } from "@/lib/generation";
 import { cancelGeneration, startGeneration, useStudio } from "@/lib/store";
 import { FavoriteButton } from "./favorite-button";
+import { ResultMedia } from "./result-media";
 
 export function GenerationCard({ gen }: { gen: Generation }) {
   const { favorites } = useStudio();
@@ -20,7 +20,7 @@ export function GenerationCard({ gen }: { gen: Generation }) {
           className="relative mx-auto w-full overflow-hidden rounded-xl border border-line bg-surface shadow-float inset-shadow-edge"
         >
           {gen.status === "done" ? (
-            <Image src={gen.resultUrl} alt={gen.intent.prompt} fill sizes="(min-width: 768px) 672px, 100vw" className="object-cover" />
+            <ResultMedia url={gen.resultUrl} alt={gen.intent.prompt} sizes="(min-width: 768px) 672px, 100vw" controls />
           ) : (
             <div className="shimmer absolute inset-0" />
           )}
@@ -34,7 +34,7 @@ export function GenerationCard({ gen }: { gen: Generation }) {
           </p>
           <p className="truncate text-xs text-fg-muted">
             {running && `${gen.credits.amount} credits on hold. Charged only if it finishes.`}
-            {gen.status === "done" && gen.intent.media === "video" && "Preview frame (mock renderer)."}
+            {gen.status === "done" && gen.intent.media === "video" && !/\.(mp4|webm)$/i.test(gen.resultUrl) && "Preview frame (local simulator)."}
           </p>
         </div>
         {running && (

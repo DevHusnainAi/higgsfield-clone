@@ -1,10 +1,14 @@
-// Client-side run store: generations persisted to localStorage, shared by sidebar and workspace.
-// ponytail: one localStorage key, last 100 runs; move to a server table when accounts exist
+// Client-side run store shared by sidebar and workspace.
+// Remote mode (Supabase env set): the API is the source of truth; localStorage is an offline cache.
+// Local mode: renders are simulated in the browser and localStorage is the only store.
 import { useSyncExternalStore } from "react";
-import { simulateGeneration, transition, type Generation } from "./generation.ts";
+import { estimateCost, simulateGeneration, transition, type Generation } from "./generation.ts";
 import type { Intent } from "./intent.ts";
+import { api, remoteEnabled } from "./remote.ts";
 
-const KEY = "studio.history.v1";
+const KEY = remoteEnabled ? "studio.remote-cache.v1" : "studio.history.v1";
+const POLL_MS = 2000;
+const OFFLINE = "Offline. Showing your saved history; it will update when the connection is back.";
 const FAVORITES_KEY = "studio.favorites.v1";
 const MAX_RUNS = 100;
 const STATUSES = new Set(["queued", "generating", "done", "failed"]);
@@ -19,12 +23,20 @@ export interface StudioState {
   view: View;
   /** Runs created at or after this belong to "this session". */
   sessionStart: number;
+  /** Account balance from the server; null in local mode. */
+  balance: number | null;
+  /** One-line message for the user (offline, out of credits). */
+  notice: string | null;
 }
 
-const EMPTY: StudioState = { runs: [], favorites: [], selectedId: null, view: "create", sessionStart: 0 };
+const EMPTY: StudioState = { runs: [], favorites: [], selectedId: null, view: "create", sessionStart: 0, balance: null, notice: null };
 let state: StudioState | null = null;
 const listeners = new Set<() => void>();
 const controllers = new Map<string, AbortController>();
+let pollTimer: ReturnType<typeof setTimeout> | null = null;
+let synced = false;
+
+const isActive = (g: Generation) => g.status === "queued" || g.status === "generating";
 
 function loadRuns(): Generation[] {
   try {
@@ -32,8 +44,9 @@ function loadRuns(): Generation[] {
     if (!Array.isArray(parsed)) return [];
     return parsed
       .filter((g): g is Generation => typeof g?.id === "string" && STATUSES.has(g?.status) && typeof g?.intent?.prompt === "string")
-      // Anything still in flight was running in a page that has since closed: settle it with a refund.
-      .map((g) => transition(g, { type: "fail", reason: "interrupted" }));
+      // Local mode: anything still in flight ran in a page that has since closed, so settle it with a refund.
+      // Remote mode: the server owns these runs and may still be rendering them.
+      .map((g) => (remoteEnabled ? g : transition(g, { type: "fail", reason: "interrupted" })));
   } catch {
     return [];
   }
@@ -50,7 +63,7 @@ function loadFavorites(): string[] {
 
 function getState(): StudioState {
   if (!state) {
-    state = { runs: loadRuns(), favorites: loadFavorites(), selectedId: null, view: "create", sessionStart: Date.now() };
+    state = { ...EMPTY, runs: loadRuns(), favorites: loadFavorites(), sessionStart: Date.now() };
     persist(KEY, state.runs); // record settled interruptions
   }
   return state;
@@ -73,6 +86,10 @@ function set(next: Partial<StudioState>) {
 
 function subscribe(listener: () => void) {
   listeners.add(listener);
+  if (remoteEnabled && !synced) {
+    synced = true;
+    void refresh();
+  }
   const onStorage = (e: StorageEvent) => {
     if (e.key === KEY) state = { ...getState(), runs: loadRuns() }; // another tab wrote
     else if (e.key === FAVORITES_KEY) state = { ...getState(), favorites: loadFavorites() };
@@ -117,7 +134,28 @@ export function matchesFilter(gen: Generation, filter: LibraryFilter, favorites:
   return true;
 }
 
+/** Pull runs + balance from the server; keeps polling while anything is still rendering. */
+async function refresh() {
+  if (pollTimer) clearTimeout(pollTimer);
+  pollTimer = null;
+  try {
+    const res = await api<{ runs: Generation[]; balance: number; error?: string }>("/api/generations");
+    if (!res.ok) throw new Error(res.data.error);
+    const { notice } = getState();
+    set({ runs: res.data.runs, balance: res.data.balance, notice: notice === OFFLINE ? null : notice });
+  } catch {
+    set({ notice: OFFLINE });
+  }
+  const { runs, notice } = getState();
+  if (runs.some(isActive) || notice === OFFLINE) pollTimer = setTimeout(refresh, POLL_MS);
+}
+
+export function dismissNotice() {
+  set({ notice: null });
+}
+
 export function startGeneration(intent: Intent) {
+  if (remoteEnabled) return void startRemote(intent);
   const ctrl = new AbortController();
   let first = true;
   void simulateGeneration(intent, {
@@ -134,6 +172,32 @@ export function startGeneration(intent: Intent) {
   });
 }
 
+async function startRemote(intent: Intent) {
+  try {
+    // The server re-parses the prompt and prices it; it never trusts a client-side cost.
+    const res = await api<{ generation?: Generation; balance?: number; cost?: number; error?: string }>("/api/generations", {
+      method: "POST",
+      body: JSON.stringify({ prompt: intent.prompt }),
+    });
+    if (res.status === 402) {
+      set({ balance: res.data.balance ?? null, notice: `Not enough credits: this needs ${res.data.cost ?? estimateCost(intent)}, you have ${res.data.balance}. Nothing was charged.` });
+      return;
+    }
+    if (!res.ok || !res.data.generation) throw new Error(res.data.error);
+    upsert(res.data.generation);
+    set({ selectedId: res.data.generation.id, view: "create", balance: res.data.balance ?? null, notice: null });
+    void refresh();
+  } catch {
+    set({ notice: "Couldn't start the generation: the server didn't respond. Check your library before retrying." });
+  }
+}
+
 export function cancelGeneration(id: string) {
-  controllers.get(id)?.abort();
+  if (!remoteEnabled) return void controllers.get(id)?.abort();
+  void api<{ generation?: Generation; balance?: number }>(`/api/generations/${id}/cancel`, { method: "POST" })
+    .then((res) => {
+      if (res.data.generation) upsert(res.data.generation);
+      if (typeof res.data.balance === "number") set({ balance: res.data.balance });
+    })
+    .catch(() => set({ notice: "Couldn't reach the server to cancel. It will settle and refund automatically if it fails." }));
 }

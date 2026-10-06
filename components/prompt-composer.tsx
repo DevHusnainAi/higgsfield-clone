@@ -4,16 +4,18 @@ import { useMemo } from "react";
 import { ArrowUp } from "@phosphor-icons/react";
 import { costBreakdown, estimateCost } from "@/lib/generation";
 import { parseIntent } from "@/lib/intent";
-import { startGeneration } from "@/lib/store";
+import { startGeneration, useStudio } from "@/lib/store";
 import { ParamChips } from "./param-chips";
 
 export function PromptComposer({ prompt, onPromptChange }: { prompt: string; onPromptChange: (p: string) => void }) {
   const intent = useMemo(() => parseIntent(prompt), [prompt]);
   const cost = estimateCost(intent);
   const empty = !intent.prompt;
+  const { balance } = useStudio();
+  const short = balance !== null && cost > balance;
 
   function submit() {
-    if (!empty) startGeneration(intent);
+    if (!empty && !short) startGeneration(intent);
   }
 
   return (
@@ -49,10 +51,10 @@ export function PromptComposer({ prompt, onPromptChange }: { prompt: string; onP
         </span>
         <button
           type="submit"
-          disabled={empty}
+          disabled={empty || short}
           className="flex h-9 shrink-0 items-center gap-2 rounded-full bg-accent pl-4 pr-3 text-sm font-medium text-accent-ink transition hover:brightness-105 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {empty ? "Generate" : `Generate · ${cost} credits`}
+          {empty ? "Generate" : short ? `Need ${cost}, have ${balance}` : `Generate · ${cost} credits`}
           <ArrowUp size={16} weight="bold" />
         </button>
       </div>

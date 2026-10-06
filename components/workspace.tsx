@@ -1,14 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { useStudio } from "@/lib/store";
+import { X } from "@phosphor-icons/react";
+import { dismissNotice, useStudio } from "@/lib/store";
 import { GenerationCard } from "./generation-card";
 import { LibraryGrid } from "./library-grid";
 import { PromptComposer } from "./prompt-composer";
 import { StarterCards } from "./starter-cards";
 
 export function Workspace() {
-  const { runs, selectedId, view } = useStudio();
+  const { runs, selectedId, view, notice } = useStudio();
   const [prompt, setPrompt] = useState("");
   const selected = runs.find((g) => g.id === selectedId);
 
@@ -18,7 +19,7 @@ export function Workspace() {
   }
 
   return (
-    <div className="flex min-h-[100dvh] flex-1 flex-col">
+    <div className="flex min-h-[calc(100dvh-3.5rem)] flex-1 flex-col md:min-h-[100dvh]">
       <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-center-safe gap-6 px-4 pb-10 pt-12">
         {view !== "create" ? (
           <LibraryGrid filter={view} />
@@ -37,7 +38,15 @@ export function Workspace() {
 
       {/* Control layer: floats over scrolling content. */}
       <div className="sticky bottom-0 px-4 pb-4">
-        <div className="mx-auto w-full max-w-2xl">
+        <div className="mx-auto flex w-full max-w-2xl flex-col gap-2">
+          {notice && (
+            <p role="alert" className="glass flex items-start gap-2 rounded-xl border border-line px-3 py-2 text-sm text-fg">
+              <span className="flex-1">{notice}</span>
+              <button onClick={dismissNotice} aria-label="Dismiss" className="text-fg-muted hover:text-fg">
+                <X size={14} />
+              </button>
+            </p>
+          )}
           <PromptComposer prompt={prompt} onPromptChange={setPrompt} />
         </div>
       </div>

@@ -31,7 +31,9 @@ export interface Intent {
 }
 
 export const MAX_PROMPT_LENGTH = 4000;
-export const DURATION = { min: 2, max: 15, default: 5 } as const;
+// Model limits (Wan 2.2 5B on fal: 17-161 frames at 24fps; 16:9, 9:16 or 1:1 only).
+export const DURATION = { min: 2, max: 6, default: 5 } as const;
+const VIDEO_RATIOS: readonly AspectRatio[] = ["16:9", "9:16", "1:1"];
 
 type Rule<T> = readonly [RegExp, T];
 
@@ -175,12 +177,19 @@ export function parseIntent(input: unknown): Intent {
 
   const aspect = findRatio(text) ?? firstHit(text, ASPECT_WORDS);
   if (aspect) matched.aspectRatio = aspect.text;
+  let aspectRatio: AspectRatio = aspect?.value ?? (media === "video" ? "16:9" : "1:1");
+  if (media === "video" && !VIDEO_RATIOS.includes(aspectRatio)) {
+    const [w, h] = aspectRatio.split(":").map(Number);
+    const fitted = w > h ? "16:9" : "9:16";
+    warnings.push(`Video supports 16:9, 9:16 or 1:1, so ${aspectRatio} became ${fitted}.`);
+    aspectRatio = fitted;
+  }
 
   return {
     prompt,
     media,
     camera: cameraMove,
-    aspectRatio: aspect?.value ?? (media === "video" ? "16:9" : "1:1"),
+    aspectRatio,
     durationSec,
     matched,
     warnings,

@@ -9,11 +9,13 @@ test("parseIntent: reads media, camera, ratio, duration", () => {
     ["portrait photo of a chef, 4:5", { media: "image", camera: null, aspectRatio: "4:5", durationSec: null }],
     ["a frying pan on a stove", { media: "image", camera: null }],
     ["a 90s style photo of a diner", { media: "image", durationSec: null }],
-    ["drone shot over cliffs, 30 seconds, 9:16", { media: "video", camera: "fpv", aspectRatio: "9:16", durationSec: 15 }],
+    ["drone shot over cliffs, 30 seconds, 9:16", { media: "video", camera: "fpv", aspectRatio: "9:16", durationSec: 6 }],
+    ["slow pan left across a desert, 21:9", { media: "video", camera: "pan-left", aspectRatio: "16:9" }],
+    ["product video, 4:5", { media: "video", aspectRatio: "9:16" }],
     ["product video without zooming in, slow pan left", { media: "video", camera: "pan-left" }],
     ["slow zoom out from a lighthouse", { media: "video", camera: "zoom-out" }],
     ["a tilt-shift photo of a city", { media: "image", camera: null }],
-    ["tiktok reel of a barista, 8s", { media: "video", aspectRatio: "9:16", durationSec: 8 }],
+    ["tiktok reel of a barista, 4s", { media: "video", aspectRatio: "9:16", durationSec: 4 }],
     ["a 2x3 grid of photos at 2/3 scale", { media: "image", aspectRatio: "1:1" }],
   ];
   for (const [prompt, expected] of cases) {
@@ -26,6 +28,7 @@ test("parseIntent: reads media, camera, ratio, duration", () => {
 
 test("parseIntent: explains adjustments instead of hiding them", () => {
   assert.equal(parseIntent("drone shot, 30 seconds").warnings.length, 1);
+  assert.match(parseIntent("drone shot, 4:5").warnings[0], /4:5 became 9:16/);
   const still = parseIntent("photo, slow pan left");
   assert.equal(still.camera, null);
   assert.match(still.warnings[0], /only apply to video/);
@@ -41,12 +44,12 @@ test("parseIntent: never throws on junk", () => {
 });
 
 test("transition: failure always refunds; terminal states are final", () => {
-  const gen = createGeneration(parseIntent("drone shot, 10s"), 0);
-  assert.deepEqual(gen.credits, { amount: 60, state: "held" });
+  const gen = createGeneration(parseIntent("drone shot, 5s"), 0);
+  assert.deepEqual(gen.credits, { amount: 30, state: "held" });
   const failed = transition(transition(gen, { type: "start" }, 1), { type: "fail", reason: "capacity" }, 2);
   assert.equal(failed.status, "failed");
-  assert.deepEqual(failed.credits, { amount: 60, state: "refunded", refundedAt: 2 });
-  assert.match(statusMessage(failed), /60 credits returned/);
+  assert.deepEqual(failed.credits, { amount: 30, state: "refunded", refundedAt: 2 });
+  assert.match(statusMessage(failed), /30 credits returned/);
   assert.equal(transition(failed, { type: "complete", resultUrl: "x" }), failed);
   assert.throws(() => createGeneration(parseIntent("  ")), RangeError);
 });

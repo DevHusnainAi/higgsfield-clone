@@ -1,10 +1,10 @@
 "use client";
 
-import Image from "next/image";
 import { ArrowCounterClockwise, FilmStrip, Heart, ImageSquare, SquaresFour } from "@phosphor-icons/react";
 import type { Generation } from "@/lib/generation";
 import { matchesFilter, select, setView, useStudio, type LibraryFilter } from "@/lib/store";
 import { FavoriteButton } from "./favorite-button";
+import { ResultMedia } from "./result-media";
 
 const TITLES: Record<LibraryFilter, string> = { all: "All", images: "Images", videos: "Videos", favorites: "Favorites" };
 
@@ -60,7 +60,7 @@ export function LibraryGrid({ filter }: { filter: LibraryFilter }) {
               >
                 <div className="relative aspect-[4/5] w-full overflow-hidden rounded-xl border border-line bg-surface inset-shadow-edge">
                   {gen.status === "done" ? (
-                    <Image src={gen.resultUrl} alt={gen.intent.prompt} fill sizes="(min-width: 768px) 220px, 50vw" className="object-cover transition duration-500 group-hover:scale-[1.03]" />
+                    <ResultMedia url={gen.resultUrl} alt={gen.intent.prompt} sizes="(min-width: 768px) 220px, 50vw" className="transition duration-500 group-hover:scale-[1.03]" />
                   ) : gen.status === "failed" ? (
                     <div className="absolute inset-0 grid place-items-center">
                       <span className="flex items-center gap-1.5 text-xs text-fg-muted">
