@@ -9,7 +9,7 @@ const ADVANCED_KEYS = ["count", "model", "seed", "guidanceScale"] as const;
 const COUNTS = Array.from({ length: COUNT.max - COUNT.min + 1 }, (_, i) => COUNT.min + i);
 
 const inputClass =
-  "h-9 w-full rounded-lg border border-line-strong bg-bg px-2.5 text-sm text-fg outline-none transition focus:border-fg-muted";
+  "h-9 w-full rounded-lg border border-line-control bg-bg px-2.5 text-sm text-fg transition";
 
 export function AdvancedSettings({
   intent,
@@ -38,7 +38,7 @@ export function AdvancedSettings({
         popoverTarget="advanced-settings"
         style={anchor("--advanced")}
         aria-label={active ? `Advanced settings, ${active} set` : "Advanced settings"}
-        className="relative grid size-9 shrink-0 place-items-center rounded-full border border-line text-fg-muted inset-shadow-edge transition hover:border-line-strong hover:text-fg active:scale-[0.96]"
+        className="relative grid size-9 shrink-0 place-items-center rounded-full border border-line text-fg-muted inset-shadow-edge transition hover:border-line-strong hover:text-fg active:scale-[0.98]"
       >
         <SlidersHorizontal size={16} />
         {active > 0 && (
@@ -133,7 +133,7 @@ export function AdvancedSettings({
                 type="button"
                 onClick={() => set({ seed: Math.floor(Math.random() * MAX_SEED) })}
                 aria-label="Pick a random seed"
-                className="grid size-9 shrink-0 place-items-center rounded-lg border border-line-strong text-fg-muted transition hover:text-fg active:scale-[0.96]"
+                className="grid size-9 shrink-0 place-items-center rounded-lg border border-line-strong text-fg-muted transition hover:text-fg active:scale-[0.98]"
               >
                 <DiceFive size={16} />
               </button>

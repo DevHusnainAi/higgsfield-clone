@@ -88,7 +88,7 @@ export function PromptComposer({
       }}
       // Firefox restores form-control state (incl. a button's disabled flag) on reload, before React hydrates.
       autoComplete="off"
-      className="glass flex flex-col gap-2 rounded-xl border border-line p-2 shadow-float inset-shadow-edge transition-colors focus-within:border-line-strong"
+      className="glass flex flex-col gap-2 rounded-xl border border-line p-2 shadow-float inset-shadow-edge transition-colors focus-within:border-line-strong has-[#prompt:focus-visible]:outline-2 has-[#prompt:focus-visible]:outline-offset-2 has-[#prompt:focus-visible]:outline-accent"
     >
       {(uploading || overrides.reference) && (
         <ReferencePreview path={overrides.reference ?? null} localUrl={local} uploading={uploading} onRemove={removeReference} />
@@ -132,7 +132,12 @@ export function PromptComposer({
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg-muted" aria-live="polite">
           {empty ? (
             <>
-              <Kbd>/</Kbd> focus · <Kbd>⌘/Ctrl ↵</Kbd> generate · <Kbd>⇧ ↵</Kbd> new line
+              {/* Keyboard hints mean nothing on touch screens. */}
+              <span className="flex gap-3 [@media(pointer:coarse)]:hidden">
+                <span><Kbd>/</Kbd> focus</span>
+                <span><Kbd>⌘/Ctrl ↵</Kbd> generate</span>
+                <span><Kbd>⇧ ↵</Kbd> new line</span>
+              </span>
             </>
           ) : (
             `${costBreakdown(intent)} = ${cost}`
@@ -141,7 +146,7 @@ export function PromptComposer({
         <button
           type="submit"
           disabled={empty || short || uploading}
-          className="flex h-9 shrink-0 items-center gap-2 rounded-full bg-accent pl-4 pr-3 text-sm font-medium text-accent-ink transition hover:brightness-105 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-40"
+          className="flex h-9 min-w-[13rem] shrink-0 items-center justify-center gap-2 rounded-full bg-accent pl-4 pr-3 text-sm font-medium tabular-nums text-accent-ink transition hover:brightness-105 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
         >
           {empty ? "Generate" : short ? `Need ${cost}, have ${balance}` : `Generate · ${cost} credits`}
           <ArrowUp size={16} weight="bold" />
@@ -160,7 +165,7 @@ export function PromptComposer({
                 onOverridesChange(next);
                 startGeneration(parseIntent(prompt, next));
               }}
-              className="rounded-full border border-line-strong px-3 py-1 font-medium text-fg inset-shadow-edge transition hover:border-accent hover:bg-accent/10 active:scale-[0.97]"
+              className="rounded-full border border-line-strong px-3 py-1 font-medium text-fg inset-shadow-edge transition hover:border-accent hover:bg-accent/10 active:scale-[0.98]"
             >
               {alt.label} · {alt.cost} credits
             </button>

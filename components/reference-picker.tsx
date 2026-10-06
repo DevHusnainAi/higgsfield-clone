@@ -66,7 +66,7 @@ export function ReferenceLibrary({
         style={anchor("--references")}
         aria-label="Start frame"
         title="Start frame"
-        className="grid size-9 shrink-0 place-items-center rounded-full border border-line text-fg-muted inset-shadow-edge transition hover:border-line-strong hover:text-fg active:scale-[0.96]"
+        className="grid size-9 shrink-0 place-items-center rounded-full border border-line text-fg-muted inset-shadow-edge transition hover:border-line-strong hover:text-fg active:scale-[0.98]"
       >
         <ImageSquare size={16} />
       </button>

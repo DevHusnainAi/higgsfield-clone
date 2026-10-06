@@ -1,6 +1,6 @@
 "use client";
 
-import type { CSSProperties } from "react";
+import type { CSSProperties, KeyboardEvent, ToggleEvent } from "react";
 import { CaretDown, Check, Warning } from "@phosphor-icons/react";
 import {
   ASPECT_RATIOS, CAMERA_MOVES, DURATION, parseIntent, VIDEO_RATIOS,
@@ -34,6 +34,20 @@ export const popoverClass =
   "m-0 inset-auto mb-2 [position-area:top_span-right] [position-try-fallbacks:flip-block] rounded-xl border border-line bg-surface-raised p-1 text-fg shadow-float inset-shadow-edge";
 export const anchor = (name: string) => ({ anchorName: name }) as CSSProperties;
 export const anchoredTo = (name: string) => ({ positionAnchor: name }) as CSSProperties;
+
+/** role="menu" promises arrow keys to assistive tech: Up/Down/Home/End move between items, wrapping. */
+export function menuKeys(e: KeyboardEvent<HTMLElement>) {
+  const items = [...e.currentTarget.querySelectorAll<HTMLElement>('[role^="menuitem"]')];
+  const i = items.indexOf(document.activeElement as HTMLElement);
+  const to = ({ ArrowDown: i + 1, ArrowUp: i - 1, Home: 0, End: items.length - 1 } as Record<string, number>)[e.key];
+  if (to === undefined) return;
+  e.preventDefault();
+  items[(to + items.length) % items.length]?.focus();
+}
+
+/** On open, focus lands on the current choice, as a menu should. */
+export const focusChecked = (e: ToggleEvent<HTMLElement>) =>
+  e.newState === "open" && e.currentTarget.querySelector<HTMLElement>('[aria-checked="true"]')?.focus();
 
 export const closePopover = (el: HTMLElement) => (el.closest("[popover]") as HTMLElement | null)?.hidePopover();
 
@@ -76,10 +90,10 @@ export function ParamChips({
                 style={anchor(`--${id}`)}
                 className={
                   overridden
-                    ? "flex items-center gap-1 rounded-full border border-accent/50 bg-accent/10 py-1 pl-3 pr-2 text-xs font-medium text-fg inset-shadow-edge transition hover:border-accent"
+                    ? "flex items-center gap-1 rounded-full border border-accent/50 bg-accent/10 py-1 pl-3 pr-2 text-xs font-medium text-fg inset-shadow-edge transition hover:border-accent active:scale-[0.98]"
                     : source
-                      ? "flex items-center gap-1 rounded-full border border-line-strong bg-fg/[0.06] py-1 pl-3 pr-2 text-xs font-medium text-fg inset-shadow-edge transition hover:border-fg-muted"
-                      : "flex items-center gap-1 rounded-full border border-dashed border-line-strong py-1 pl-3 pr-2 text-xs text-fg-muted transition hover:border-fg-muted hover:text-fg"
+                      ? "flex items-center gap-1 rounded-full border border-line-strong bg-fg/[0.06] py-1 pl-3 pr-2 text-xs font-medium text-fg inset-shadow-edge transition hover:border-fg-muted active:scale-[0.98]"
+                      : "flex items-center gap-1 rounded-full border border-dashed border-line-strong py-1 pl-3 pr-2 text-xs text-fg-muted transition hover:border-fg-muted hover:text-fg active:scale-[0.98]"
                 }
               >
                 {display(field, intent)}
@@ -88,7 +102,7 @@ export function ParamChips({
                   , {FIELD_LABEL[field]}, {caption}
                 </span>
               </button>
-              <div id={id} popover="auto" role="menu" aria-label={FIELD_LABEL[field]} style={anchoredTo(`--${id}`)} className={`${popoverClass} w-52`}>
+              <div id={id} popover="auto" role="menu" aria-label={FIELD_LABEL[field]} style={anchoredTo(`--${id}`)} onKeyDown={menuKeys} onToggle={focusChecked} className={`${popoverClass} w-52`}>
                 <p className="px-2.5 pb-1 pt-1.5 text-xs text-fg-muted">
                   {FIELD_LABEL[field]}: {caption}
                 </p>
