@@ -186,7 +186,7 @@ function PendingCard({ ratio }: { ratio: string }) {
     <section aria-label="Starting generation" className="flex flex-col gap-3">
       <div
         style={{ aspectRatio: `${w} / ${h}`, maxWidth: `calc(var(--media-h, 50dvh) * ${w} / ${h})` }}
-        className="shimmer relative mx-auto w-full overflow-hidden rounded-xl border border-line shadow-float inset-shadow-edge"
+        className="shimmer relative mx-auto w-full overflow-hidden rounded-lg"
       />
       <PipelineStepper active={1} />
       <p role="status" className="text-sm text-fg">

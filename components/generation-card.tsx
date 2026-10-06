@@ -19,7 +19,7 @@ export function GenerationCard({ gen, onRemix }: { gen: Generation; onRemix: (ge
       {gen.status !== "failed" && (
         <div
           style={{ aspectRatio: `${w} / ${h}`, maxWidth: `calc(var(--media-h, 50dvh) * ${w} / ${h})` }}
-          className="relative mx-auto w-full overflow-hidden rounded-xl border border-line bg-surface shadow-float inset-shadow-edge"
+          className="relative mx-auto w-full overflow-hidden rounded-lg"
         >
           {gen.status === "done" ? (
             <ResultMedia url={gen.resultUrl} alt={gen.intent.prompt} sizes="(min-width: 768px) 672px, 100vw" controls />
@@ -40,7 +40,7 @@ export function GenerationCard({ gen, onRemix }: { gen: Generation; onRemix: (ge
               onClick={() => select(g.id)}
               aria-label={`Output ${i + 1} of ${batch.length}`}
               aria-current={g.id === gen.id}
-              className="relative size-12 overflow-hidden rounded-lg border border-line bg-surface opacity-60 transition hover:opacity-100 active:scale-[0.96] aria-[current=true]:border-accent aria-[current=true]:opacity-100"
+              className="relative size-12 overflow-hidden rounded-lg border border-line bg-surface opacity-60 transition hover:opacity-100 active:scale-[0.98] aria-[current=true]:border-accent aria-[current=true]:opacity-100"
             >
               {g.status === "done" ? (
                 <ResultMedia url={g.resultUrl} alt="" sizes="48px" />
@@ -70,13 +70,13 @@ export function GenerationCard({ gen, onRemix }: { gen: Generation; onRemix: (ge
             <button
               type="button"
               onClick={() => cancelGeneration(gen.id)}
-              className="flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-line px-3 text-xs font-medium text-fg-muted transition hover:text-fg active:scale-[0.97]"
+              className="flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-line px-3 text-xs font-medium text-fg-muted transition hover:text-fg active:scale-[0.98]"
             >
               <X size={12} weight="bold" /> Cancel
             </button>
           )}
           {!running && (
-            <button type="button" onClick={() => onRemix(gen)} title="Load this prompt and its settings into the composer" className="flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-line px-3 text-xs font-medium text-fg transition hover:border-line-strong active:scale-[0.97]">
+            <button type="button" onClick={() => onRemix(gen)} title="Load this prompt and its settings into the composer" className="flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-line px-3 text-xs font-medium text-fg transition hover:border-line-strong active:scale-[0.98]">
               <Shuffle size={12} weight="bold" /> Remix
             </button>
           )}
@@ -85,7 +85,7 @@ export function GenerationCard({ gen, onRemix }: { gen: Generation; onRemix: (ge
             <button
               type="button"
               onClick={() => startGeneration(gen.intent)}
-              className="flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-line px-3 text-xs font-medium text-fg transition hover:bg-surface-raised active:scale-[0.97]"
+              className="flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-line px-3 text-xs font-medium text-fg transition hover:bg-surface-raised active:scale-[0.98]"
             >
               <ArrowClockwise size={12} weight="bold" /> Retry · {estimateCost(gen.intent)} credits
             </button>
