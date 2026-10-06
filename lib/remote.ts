@@ -190,7 +190,9 @@ export function watchAuth(cb: (auth: Auth, uid: string | null, message: string |
     // Supabase advises against awaiting other auth calls inside this callback; defer the follow-up work.
     setTimeout(async () => {
       if (!s) return cb({ status: "anonymous", pendingEmail: null }, null, urlMessage);
-      const message = event === "SIGNED_IN" ? await mergeGuest(s.user) : null;
+      // INITIAL_SESSION too: a code verified on the standalone /sign-in page (no store mounted there) is only
+      // seen here after the redirect to "/". mergeGuest is a no-op unless a guest token was saved.
+      const message = event === "SIGNED_IN" || event === "INITIAL_SESSION" ? await mergeGuest(s.user) : null;
       cb(toAuth(s.user), s.user.id, message ?? urlMessage);
       urlMessage = null;
     });
@@ -223,6 +225,25 @@ export async function sendMagicLink(email: string): Promise<"upgrade" | "existin
   const { error } = await auth.signInWithOtp({ email, options: { emailRedirectTo: redirectTo(), shouldCreateUser: !guest } });
   if (error) throw new Error(error.message);
   return guest ? "existing" : "signin";
+}
+
+/** Read-only: what kind of session this browser has. Never creates a guest (the sign-in page must not). */
+export async function sessionKind(): Promise<"none" | "guest" | "user"> {
+  const user = (await supabase().auth.getSession()).data.session?.user;
+  return !user ? "none" : user.is_anonymous ? "guest" : "user";
+}
+
+/**
+ * The 6-digit code from the same email as the link, for signing in on a different device than the one
+ * that opens the email. A guest confirming their own new address uses the email-change code; everything
+ * else (new or existing account) is a sign-in code.
+ */
+export async function verifyCode(email: string, token: string): Promise<void> {
+  const auth = supabase().auth;
+  const user = (await auth.getSession()).data.session?.user;
+  const upgrading = user?.is_anonymous && user.new_email?.toLowerCase() === email.toLowerCase();
+  const { error } = await auth.verifyOtp({ email, token, type: upgrading ? "email_change" : "email" });
+  if (error) throw new Error(/expired|invalid/i.test(error.message) ? "That code is wrong or has expired. Check the latest email, or send a new one." : error.message);
 }
 
 export async function signOut() {

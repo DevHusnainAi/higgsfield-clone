@@ -1,0 +1,251 @@
+"use client";
+
+import { useEffect, useId, useRef, type RefObject } from "react";
+import { SPARK } from "@/components/logo";
+import { approach, gaze, PAW_SPRING, springStep, type Spring, type Vec } from "@/lib/gaze";
+
+export type Field = "email" | "code" | null;
+export type Mood = { kind: "idle" | "happy" | "error"; at: number };
+
+// Geometry (viewBox 240×240). Eyes sit on the body; paws rest PAW_DROP units below, outside the viewBox.
+const EYES = [{ x: 95, y: 122 }, { x: 145, y: 122 }] as const;
+const EYE_R = 22;
+const PUPIL_TRAVEL = 9;
+const PAW_DROP = 150;
+const BODY = { x: 120, y: 125 };
+
+// Response rates (per second) for frame-rate independent smoothing; see lib/gaze.ts.
+const RATE = { pupil: 14, head: 8, home: 4, lid: 40 };
+const SHAKE = [0, -6, 6, -4, 4, 0];
+const SHAKE_MS = 360;
+
+const reduceMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/** Where the text caret is in an input, in viewport px: Iris reads along as you type. */
+function caretPoint(input: HTMLInputElement): Vec {
+  const r = input.getBoundingClientRect();
+  const cs = getComputedStyle(input);
+  const ctx = document.createElement("canvas").getContext("2d")!;
+  ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  const before = input.value.slice(0, input.selectionStart ?? input.value.length);
+  const pad = parseFloat(cs.paddingLeft);
+  const x = Math.min(r.left + pad + ctx.measureText(before).width - input.scrollLeft, r.right - parseFloat(cs.paddingRight));
+  return { x, y: r.top + r.height / 2 };
+}
+
+/**
+ * Iris, the sign-in creature. Decorative (aria-hidden): every state it shows is also stated in the form.
+ * Tracks the pointer, reads along the email field, covers its eyes while the code field has focus,
+ * peeks when the code is shown, hops on success, shakes on error. All motion stops under reduced motion.
+ */
+export function Creature({ field, peek, mood, emailRef }: { field: Field; peek: boolean; mood: Mood; emailRef: RefObject<HTMLInputElement | null> }) {
+  const svg = useRef<SVGSVGElement>(null);
+  const clip = `iris-eye-${useId().replace(/:/g, "")}`; // unique per instance: url(#…) resolves to the first match
+  const input = useRef({ field, peek, mood }); // latest props, read by the frame loop
+  const wake = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    input.current = { field, peek, mood };
+    wake.current();
+  }, [field, peek, mood]);
+
+  useEffect(() => {
+    const el = svg.current!;
+    // The animated groups, by data-part: written straight to the DOM each frame, no React renders.
+    const p = Object.fromEntries([...el.querySelectorAll<SVGGElement>("[data-part]")].map((n) => [n.dataset.part!, n]));
+    let pointer: Vec | null = null;
+    let frame = 0;
+    let last = 0;
+    const pupils = EYES.map(() => ({ x: 0, y: 0 }));
+    const head = { x: 0, y: 0, r: 0 };
+    const lids = [0, 0];
+    const paws: Spring[] = [{ x: 1, v: 0 }, { x: 1, v: 0 }]; // 1 = resting below, 0 = over the eyes
+    let hop: Spring = { x: 0, v: 0 };
+    let blinkUntil = 0;
+    let nextBlink = performance.now() + 2500 + Math.random() * 3500;
+    let moodSeen = input.current.mood.at;
+    let shakeStart = -Infinity;
+
+    const set = (k: string, t: string) => p[k]?.setAttribute("transform", t);
+
+    const tick = (now: number) => {
+      const dt = Math.min(0.1, last ? (now - last) / 1000 : 1 / 60);
+      last = now;
+      const reduce = reduceMotion();
+      const { field, peek, mood } = input.current;
+      const cover = field === "code";
+      el.dataset.state = cover ? (peek ? "peek" : "cover") : field === "email" ? "read" : "track";
+
+      // Reactions to a new mood (success hop / error shake), once per mood change.
+      if (mood.at !== moodSeen) {
+        moodSeen = mood.at;
+        if (!reduce && mood.kind === "happy") hop = { x: 0, v: -170 };
+        if (!reduce && mood.kind === "error") shakeStart = now;
+      }
+
+      // Gaze target: the caret while typing the email, otherwise the pointer, otherwise straight ahead.
+      const box = el.getBoundingClientRect();
+      const scale = box.width / 240;
+      const toClient = (v: Vec) => ({ x: box.left + v.x * scale, y: box.top + v.y * scale });
+      const target = reduce ? null : field === "email" && emailRef.current ? caretPoint(emailRef.current) : pointer;
+      const rate = target ? RATE.pupil : RATE.home;
+
+      let busy = false;
+      const ease = (cur: number, to: number, r: number) => {
+        const next = approach(cur, to, r, dt);
+        if (Math.abs(next - to) > 0.05) busy = true;
+        return Math.abs(next - to) > 0.01 ? next : to;
+      };
+
+      EYES.forEach((eye, i) => {
+        const g = target ? gaze(target, toClient(eye), PUPIL_TRAVEL, 300 * scale) : { x: 0, y: 0 };
+        pupils[i].x = ease(pupils[i].x, g.x, rate);
+        pupils[i].y = ease(pupils[i].y, g.y, rate);
+        set(`pupil${i}`, `translate(${pupils[i].x} ${pupils[i].y})`);
+      });
+
+      // Head and brackets lean toward the target; nearer parts move more (depth).
+      const lean = target ? gaze(target, toClient(BODY), 6, 400 * scale) : { x: 0, y: 0 };
+      head.x = ease(head.x, lean.x, target ? RATE.head : RATE.home);
+      head.y = ease(head.y, lean.y, target ? RATE.head : RATE.home);
+      head.r = ease(head.r, (lean.x / 6) * 3, target ? RATE.head : RATE.home);
+
+      // Paws: a real spring up over the eyes and back down. Reduced motion snaps (CSS crossfades opacity).
+      const pawTo = [cover ? 0 : 1, cover ? (peek ? 0.4 : 0) : 1];
+      paws.forEach((s, i) => {
+        paws[i] = reduce ? { x: pawTo[i], v: 0 } : springStep(s, pawTo[i], PAW_SPRING.stiffness, PAW_SPRING.damping, dt);
+        if (Math.abs(paws[i].x - pawTo[i]) > 0.002 || Math.abs(paws[i].v) > 0.01) busy = true;
+        set(`paw${i}`, `translate(0 ${paws[i].x * PAW_DROP})`);
+      });
+      el.dataset.covered = String(cover);
+
+      // Lids: closed while covered (the peeking eye half open), blinking when idle, half-lowered when happy.
+      if (!reduce && !cover && now > nextBlink) {
+        blinkUntil = now + 140;
+        nextBlink = now + 2500 + Math.random() * 3500;
+      }
+      const blinking = now < blinkUntil;
+      if (blinking) busy = true;
+      const happy = mood.kind === "happy" && now - mood.at < 2400;
+      const lidTo = [cover ? 1 : blinking ? 1 : happy ? 0.45 : 0, cover ? (peek ? 0.5 : 1) : blinking ? 1 : happy ? 0.45 : 0];
+      lids.forEach((v, i) => {
+        lids[i] = reduce ? lidTo[i] : ease(v, lidTo[i], RATE.lid);
+        const top = EYES[i].y - EYE_R;
+        set(`lid${i}`, `translate(0 ${top}) scale(1 ${lids[i]}) translate(0 ${-top})`);
+      });
+      if (happy) busy = true;
+
+      // One-shot reactions: hop (spring) and shake (keyframes).
+      hop = springStep(hop, 0, PAW_SPRING.stiffness, PAW_SPRING.damping, dt);
+      if (Math.abs(hop.x) > 0.05 || Math.abs(hop.v) > 0.5) busy = true;
+      const t = (now - shakeStart) / SHAKE_MS;
+      let shake = 0;
+      if (t >= 0 && t < 1) {
+        const f = t * (SHAKE.length - 1);
+        const k = Math.floor(f);
+        shake = SHAKE[k] + (SHAKE[k + 1] - SHAKE[k]) * (f - k);
+        busy = true;
+      }
+      set("head", `translate(${head.x + shake} ${head.y + hop.x}) rotate(${head.r} ${BODY.x} ${BODY.y})`);
+      set("frame", `translate(${head.x / 3} ${head.y / 3})`);
+
+      // Asleep once settled; woken by pointer moves, caret moves, prop changes and the blink heartbeat.
+      frame = busy ? requestAnimationFrame(tick) : 0;
+      if (!frame) last = 0;
+    };
+
+    wake.current = () => {
+      if (!frame) frame = requestAnimationFrame(tick);
+    };
+    const onMove = (e: PointerEvent) => {
+      if (e.pointerType !== "mouse" && e.pointerType !== "pen") return; // touch: focus-driven only
+      pointer = { x: e.clientX, y: e.clientY };
+      wake.current();
+    };
+    const onLeave = () => {
+      pointer = null;
+      wake.current();
+    };
+    const onCaret = () => input.current.field === "email" && wake.current();
+    // Blinks need a heartbeat even when nothing moves.
+    const blinker = setInterval(() => wake.current(), 1000);
+
+    window.addEventListener("pointermove", onMove, { passive: true });
+    document.documentElement.addEventListener("pointerleave", onLeave);
+    window.addEventListener("blur", onLeave);
+    document.addEventListener("selectionchange", onCaret);
+    wake.current();
+    return () => {
+      cancelAnimationFrame(frame);
+      clearInterval(blinker);
+      window.removeEventListener("pointermove", onMove);
+      document.documentElement.removeEventListener("pointerleave", onLeave);
+      window.removeEventListener("blur", onLeave);
+      document.removeEventListener("selectionchange", onCaret);
+    };
+  }, [emailRef]);
+
+  const mouth =
+    mood.kind === "happy" ? (
+      <path d="M108 160 Q120 172 132 160" />
+    ) : mood.kind === "error" ? (
+      <circle cx="120" cy="164" r="5" />
+    ) : (
+      <path d="M110 164 H130" />
+    );
+
+  return (
+    <svg ref={svg} viewBox="0 0 240 240" aria-hidden className="w-full max-w-[18rem] overflow-hidden" data-state="track">
+      <defs>
+        {EYES.map((e, i) => (
+          <clipPath key={i} id={`${clip}-${i}`}>
+            <circle cx={e.x} cy={e.y} r={EYE_R} />
+          </clipPath>
+        ))}
+      </defs>
+
+      {/* Viewfinder brackets: the logo's frame, drifting slightly behind the head for depth. */}
+      <g data-part="frame" className="fill-none stroke-fg-muted" strokeWidth="2.5" strokeLinecap="round">
+        <path d="M24 64V50a16 16 0 0 1 16-16h14M186 34h14a16 16 0 0 1 16 16v14M216 186v14a16 16 0 0 1-16 16h-14M54 216H40a16 16 0 0 1-16-16v-14" />
+      </g>
+
+      <g data-part="head">
+        <rect x="40" y="50" width="160" height="150" rx="44" className="fill-surface-raised stroke-line-strong" strokeWidth="1.5" />
+        <path d="M84 51.5H156" className="stroke-[oklch(1_0_0/0.06)]" strokeWidth="1.5" strokeLinecap="round" />
+        <path d={SPARK} transform="translate(105.6 63.6) scale(1.2)" className={`fill-accent transition-opacity duration-300 ${field === "code" ? "opacity-40" : ""}`} />
+
+        {EYES.map((e, i) => (
+          <g key={i} clipPath={`url(#${clip}-${i})`}>
+            <circle cx={e.x} cy={e.y} r={EYE_R} className="fill-fg" />
+            <g data-part={`pupil${i}`}>
+              <circle cx={e.x} cy={e.y} r="9" className="fill-bg stroke-accent" strokeWidth="2" />
+              <circle cx={e.x + 3} cy={e.y - 3} r="3" className="fill-fg" />
+            </g>
+            <g data-part={`lid${i}`}>
+              <rect x={e.x - EYE_R - 1} y={e.y - EYE_R - 1} width={EYE_R * 2 + 2} height={EYE_R * 2 + 2} className="fill-surface-raised" />
+            </g>
+          </g>
+        ))}
+
+        <g className="fill-none stroke-fg-muted" strokeWidth="2.5" strokeLinecap="round">
+          {mouth}
+        </g>
+      </g>
+
+      {/* Paws rise from below the viewBox over the eyes. Under reduced motion they crossfade instead. */}
+      {[63, 121].map((x, i) => (
+        <g key={x} data-part={`paw${i}`} transform={`translate(0 ${PAW_DROP})`}>
+          <rect
+            x={x}
+            y="100"
+            width="56"
+            height="40"
+            rx="20"
+            className={`fill-surface-hover stroke-line-strong motion-reduce:transition-opacity motion-reduce:duration-150 ${field === "code" ? "" : "motion-reduce:opacity-0"}`}
+            strokeWidth="1.5"
+          />
+        </g>
+      ))}
+    </svg>
+  );
+}

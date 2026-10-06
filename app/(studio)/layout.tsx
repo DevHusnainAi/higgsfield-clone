@@ -1,7 +1,7 @@
 import { StudioSidebar } from "@/components/history-sidebar";
 
 /** The app shell: sidebar + workspace. Legal pages live outside it, so reading them starts no guest session. */
-export default function StudioLayout({ children }: LayoutProps<"/">) {
+export default function StudioLayout({ children, modal }: LayoutProps<"/">) {
   return (
     <div className="flex min-h-[100dvh] flex-col md:flex-row">
       {/* First tab stop. The prompt is the page's main action and sits after the sidebar in DOM order.
@@ -15,6 +15,7 @@ export default function StudioLayout({ children }: LayoutProps<"/">) {
       </a>
       <StudioSidebar />
       <main className="flex min-w-0 flex-1 flex-col overflow-x-clip">{children}</main>
+      {modal /* sign-in, intercepted from /sign-in */}
     </div>
   );
 }
