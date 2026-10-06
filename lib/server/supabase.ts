@@ -30,13 +30,30 @@ if (secret && !secretOk) {
 
 export const admin = url && secretOk ? createClient(url, secret, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
 
-/** Verifies the caller's Supabase access token. Returns the user id, or null. */
-export async function userIdFrom(req: Request): Promise<string | null> {
-  const token = req.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1];
+/** A verified user. `permanent` = signed in with email or Google; false for an anonymous session. */
+export interface Account {
+  id: string;
+  permanent: boolean;
+}
+
+/** Verifies a Supabase access token with the auth server (never trusts its claims locally). */
+export async function accountFor(token: string | undefined): Promise<Account | null> {
   if (!admin || !token) return null;
   const { data, error } = await admin.auth.getUser(token);
   if (error) console.error(`[api] access token rejected: ${error.message}${error.code ? ` (${error.code})` : ""}`);
-  return error ? null : data.user.id;
+  return error ? null : { id: data.user.id, permanent: !data.user.is_anonymous };
+}
+
+export const accountFrom = (req: Request) => accountFor(req.headers.get("authorization")?.match(/^Bearer (.+)$/)?.[1]);
+
+/** Verifies the caller's Supabase access token. Returns the user id, or null. */
+export const userIdFrom = async (req: Request) => (await accountFrom(req))?.id ?? null;
+
+/** Creates the credit row on first use and pays the one-time 40-credit grant to permanent accounts. Returns the balance. */
+export async function settleAccount(account: Account): Promise<number> {
+  const { data, error } = await admin!.rpc("settle_account", { p_user: account.id, p_permanent: account.permanent });
+  if (error) throw new Error(`settle_account failed: ${error.message}`);
+  return data as number;
 }
 
 export interface GenerationRow {

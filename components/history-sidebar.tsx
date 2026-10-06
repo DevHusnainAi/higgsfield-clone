@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useRef, type ComponentType, type ReactNode } from "react";
 import { CheckCircle, CircleNotch, FilmStrip, Heart, ImageSquare, List, Plus, Sparkle, SquaresFour, Terminal, WarningCircle, X, type IconProps } from "@phosphor-icons/react";
+import { AccountRow } from "@/components/account";
 import { isVideo } from "@/components/result-media";
 import type { Generation } from "@/lib/generation";
 import { setDevConsole, useDevConsoleOpen } from "@/lib/dev-log";
@@ -236,6 +237,7 @@ function SidebarBody({ onNavigate, onClose }: { onNavigate?: () => void; onClose
           <dd className={`text-right tabular-nums ${held > 0 ? "text-accent-text" : "text-fg-muted"}`}>{held}</dd>
         </dl>
       </div>
+      <AccountRow />
     </div>
   );
 }

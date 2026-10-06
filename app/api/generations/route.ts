@@ -2,7 +2,7 @@ import { after } from "next/server";
 import { estimateCost, splitBatch } from "@/lib/generation";
 import { parseIntent } from "@/lib/intent";
 import { runGeneration } from "@/lib/server/run-generation";
-import { admin, RATE_RETRY_AFTER_S, REFERENCES, rateLimited, toGeneration, userIdFrom, type GenerationRow } from "@/lib/server/supabase";
+import { accountFrom, admin, RATE_RETRY_AFTER_S, REFERENCES, rateLimited, settleAccount, toGeneration, type GenerationRow } from "@/lib/server/supabase";
 
 // The render runs in after(); this caps it (see RENDER_TIMEOUT_MS).
 export const maxDuration = 300;
@@ -20,8 +20,11 @@ async function balanceOf(userId: string): Promise<number> {
 /** Your generations (newest first) and credit balance. */
 export async function GET(req: Request) {
   if (!admin) return json({ error: "Server is not configured" }, 503);
-  const userId = await userIdFrom(req);
-  if (!userId) return json({ error: "Unauthorized" }, 401);
+  const account = await accountFrom(req);
+  if (!account) return json({ error: "Unauthorized" }, 401);
+  const userId = account.id;
+  // Before reading: creates the credit row, and pays the sign-up grant the first time a permanent account shows up.
+  const balance = await settleAccount(account);
 
   const sweep = await admin.rpc("fail_stale_generations", { p_user: userId, p_max_age: STALE_AFTER });
   if (sweep.error) console.error("[api] stale sweep failed (is the migration applied?)", sweep.error.message);
@@ -37,14 +40,16 @@ export async function GET(req: Request) {
     return json({ error: `Could not load generations: ${error.message}` }, 500);
   }
 
-  return json({ runs: (data as GenerationRow[]).map(toGeneration), balance: await balanceOf(userId), swept: sweep.data ?? 0 });
+  // Re-read: the sweep may have refunded stuck runs since settleAccount.
+  return json({ runs: (data as GenerationRow[]).map(toGeneration), balance: sweep.data ? await balanceOf(userId) : balance, swept: sweep.data ?? 0 });
 }
 
 /** Start a run of 1-4 outputs. Intent and cost are computed here from the prompt + re-validated overrides. */
 export async function POST(req: Request) {
   if (!admin) return json({ error: "Server is not configured" }, 503);
-  const userId = await userIdFrom(req);
-  if (!userId) return json({ error: "Unauthorized" }, 401);
+  const account = await accountFrom(req);
+  if (!account) return json({ error: "Unauthorized" }, 401);
+  const userId = account.id;
   if (await rateLimited(req, userId)) return tooMany("Too many requests. Try again in a few minutes.");
 
   const body: unknown = await req.json().catch(() => null);
@@ -59,6 +64,7 @@ export async function POST(req: Request) {
   const items = splitBatch(intent);
   const cost = estimateCost(intent);
 
+  await settleAccount(account); // a first action must not create the row at the anonymous default
   // Holds credits for every output in one transaction: all rows are created, or none.
   const rpcStart = performance.now();
   const { data, error } = await admin.rpc("start_generation", { p_user: userId, p_intents: items, p_cost: estimateCost(items[0]) });

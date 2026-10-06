@@ -11,7 +11,7 @@ const migrations = readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
 const STUBS = `
   create role anon; create role authenticated; create role service_role;
   create schema auth;
-  create table auth.users (id uuid primary key);
+  create table auth.users (id uuid primary key, is_anonymous boolean not null default false);
   create function auth.uid() returns uuid language sql stable as
     $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
   grant usage on schema auth to authenticated;
@@ -125,11 +125,11 @@ test("batch holds every output at once, all or nothing; outputs settle independe
   assert.equal((await one<{ n: number }>(db, "select count(*)::int as n from public.generations")).n, 3);
 });
 
-test("new accounts start with 40; more than 3 active runs is refused under the balance lock", async () => {
+test("new accounts start with the anonymous taster grant; more than 3 active runs is refused under the balance lock", async () => {
   const db = await setup();
   const CAROL = "00000000-0000-0000-0000-00000000000c";
   await db.query("insert into auth.users values ($1)", [CAROL]);
-  assert.equal(await balance(db, CAROL), 40);
+  assert.equal(await balance(db, CAROL), 8);
 
   const first = await start(db, ALICE, 1);
   await db.query("select * from public.start_generation($1, '[{},{},{},{}]'::jsonb, 1)", [ALICE]); // a batch counts as one run
@@ -224,4 +224,68 @@ test("RLS: users read only their own rows and cannot write or call functions", a
   await assert.rejects(db.query(`select public.cancel_generation(gen_random_uuid(), '${ALICE}')`), /permission denied/);
   await assert.rejects(db.query("delete from public.generations"), /permission denied/);
   await assert.rejects(db.query("select * from public.rate_limit_hits"), /permission denied/);
+});
+
+const settle = async (db: PGlite, user: string, permanent: boolean) =>
+  (await one<{ b: number }>(db, "select public.settle_account($1, $2) as b", [user, permanent])).b;
+
+test("accounts: anonymous gets 8; a permanent account gets 40 exactly once, including on upgrade", async () => {
+  const db = await setup();
+  const ANON = "00000000-0000-0000-0000-0000000000a1";
+  const DIRECT = "00000000-0000-0000-0000-0000000000a2";
+  await db.query("insert into auth.users values ($1, true), ($2, false)", [ANON, DIRECT]);
+
+  assert.equal(await settle(db, ANON, false), 8);
+  await start(db, ANON, 3); // spends part of the taster
+  assert.equal(await settle(db, ANON, false), 5);
+  // Upgrade keeps the user id: leftover taster + the one-time grant.
+  assert.equal(await settle(db, ANON, true), 45);
+  assert.equal(await settle(db, ANON, true), 45, "grant is paid once");
+  // Signing up directly: exactly 40, never 8 + 40.
+  assert.equal(await settle(db, DIRECT, true), 40);
+  assert.equal(await settle(db, DIRECT, true), 40);
+});
+
+test("merge: moves only settled history from an anonymous user to a permanent one, never credits", async () => {
+  const db = await setup();
+  const ANON = "00000000-0000-0000-0000-0000000000b1";
+  const ANON2 = "00000000-0000-0000-0000-0000000000b2";
+  await db.query("insert into auth.users values ($1, true), ($2, true)", [ANON, ANON2]);
+  await db.query("update auth.users set is_anonymous = false where id = $1", [ALICE]);
+  await settle(db, ANON, false);
+  const done = await start(db, ANON, 2);
+  await db.query("select * from public.complete_generation($1, 'x/y.png')", [done.id]);
+  const failed = await start(db, ANON, 2);
+  await db.query("select * from public.fail_generation($1, 'provider_error')", [failed.id]);
+  const running = await start(db, ANON, 2);
+  const anonBefore = await balance(db, ANON); // 8 - 2 charged - 2 held = 4
+  const aliceBefore = await balance(db, ALICE);
+
+  const moved = await one<{ n: number }>(db, "select public.merge_anonymous_history($1, $2) as n", [ANON, ALICE]);
+  assert.equal(moved.n, 2);
+  const owners = (await db.query<{ id: string; user_id: string }>("select id, user_id from public.generations")).rows;
+  const owner = (id: string) => owners.find((r) => r.id === id)!.user_id;
+  assert.equal(owner(done.id), ALICE);
+  assert.equal(owner(failed.id), ALICE);
+  assert.equal(owner(running.id), ANON, "a run still holding credits stays put");
+  assert.equal(await balance(db, ALICE), aliceBefore, "no credits move");
+  assert.equal(await balance(db, ANON), anonBefore);
+
+  // The held run's refund goes back to the anonymous user, not the account it merged into.
+  await db.query("select * from public.fail_generation($1, 'cancelled')", [running.id]);
+  assert.equal(await balance(db, ALICE), aliceBefore);
+
+  // Once settled (refund already paid to the anonymous user), a later merge brings that run across too; then nothing is left.
+  assert.equal((await one<{ n: number }>(db, "select public.merge_anonymous_history($1, $2) as n", [ANON, ALICE])).n, 1);
+  assert.equal((await one<{ n: number }>(db, "select public.merge_anonymous_history($1, $2) as n", [ANON, ALICE])).n, 0);
+  assert.equal(await balance(db, ALICE), aliceBefore, "still no credits moved");
+  await assert.rejects(db.query("select public.merge_anonymous_history($1, $2)", [BOB, ALICE]), /source_not_anonymous/);
+  await assert.rejects(db.query("select public.merge_anonymous_history($1, $2)", [ANON, ANON2]), /target_not_permanent/);
+});
+
+test("accounts: browser roles cannot settle grants or merge", async () => {
+  const db = await setup();
+  await db.exec(`set role authenticated; select set_config('request.jwt.claim.sub', '${ALICE}', false);`);
+  await assert.rejects(db.query("select public.settle_account($1, true)", [ALICE]), /permission denied/);
+  await assert.rejects(db.query("select public.merge_anonymous_history($1, $2)", [BOB, ALICE]), /permission denied/);
 });

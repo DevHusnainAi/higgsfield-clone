@@ -5,12 +5,14 @@ import { useSyncExternalStore } from "react";
 import { estimateCost, simulateGeneration, splitBatch, transition, type Generation } from "./generation.ts";
 import { OVERRIDE_KEYS, type Intent } from "./intent.ts";
 import { devLog } from "./dev-log.ts";
-import { api, remoteEnabled, SyncError } from "./remote.ts";
+import { api, remoteEnabled, SyncError, watchAuth, type Auth } from "./remote.ts";
 
 const KEY = remoteEnabled ? "studio.remote-cache.v1" : "studio.history.v1";
 const POLL_MS = 2000;
 const MAX_BACKOFF_MS = 60_000;
 const FAVORITES_KEY = "studio.favorites.v1";
+/** Which account the cached history belongs to, so another account (or a signed-out browser) never sees it. */
+const OWNER_KEY = "studio.remote-cache.owner";
 const MAX_RUNS = 100;
 const STATUSES = new Set(["queued", "generating", "done", "failed"]);
 const FALLBACK_NOTICE = "Upstream API limit reached (402). Displaying fallback asset to preserve application state.";
@@ -33,10 +35,13 @@ export interface StudioState {
   syncIssue: string | null;
   /** A start request in flight: parsed, waiting on the server to lock credits and create the rows. */
   pending: Intent | null;
+  /** Remote mode only. "unknown" until the browser has read its session (and always on the server). */
+  auth: Auth;
 }
 
 const EMPTY: StudioState = {
   runs: [], favorites: [], selectedId: null, view: "create", sessionStart: 0, balance: null, notice: null, syncIssue: null, pending: null,
+  auth: { status: "unknown" },
 };
 let state: StudioState | null = null;
 const listeners = new Set<() => void>();
@@ -45,6 +50,8 @@ let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let synced = false;
 let inflight: Promise<void> | null = null;
 let failures = 0;
+/** The account the store currently belongs to; replies sent as any other account are dropped. */
+let currentUid: string | null = null;
 
 const isActive = (g: Generation) => g.status === "queued" || g.status === "generating";
 
@@ -128,6 +135,7 @@ function subscribe(listener: () => void) {
   listeners.add(listener);
   if (remoteEnabled && !synced) {
     synced = true;
+    watchAuth(onAuth);
     void refresh();
     // Come back as soon as there's a reason to: network restored or the tab is looked at again.
     window.addEventListener("online", () => void refresh());
@@ -146,6 +154,37 @@ function subscribe(listener: () => void) {
     listeners.delete(listener);
     window.removeEventListener("storage", onStorage);
   };
+}
+
+function readOwner(): string | null {
+  try {
+    return localStorage.getItem(OWNER_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether cached history must be dropped: the session belongs to a different account than the cache
+ * (`owner`), or the user signed out. An anonymous user upgrading in place keeps the same uid, so keeps it all.
+ */
+export const accountSwitched = (owner: string | null, uid: string | null, previous: string | null) =>
+  (uid !== null && owner !== null && owner !== uid) || (uid === null && previous !== null);
+
+/** Account changes: sign-in to another account or sign-out clears the old account's history before anything renders. */
+function onAuth(auth: Auth, uid: string | null, message: string | null) {
+  const switched = accountSwitched(readOwner(), uid, currentUid);
+  currentUid = uid;
+  try {
+    if (uid) localStorage.setItem(OWNER_KEY, uid);
+    else localStorage.removeItem(OWNER_KEY);
+  } catch {}
+  set({
+    auth,
+    ...(switched && { runs: [], balance: null, selectedId: null, pending: null, syncIssue: null }),
+    ...(message && { notice: message }),
+  });
+  void refresh(); // new balance after an upgrade's grant, or the new account's history
 }
 
 export function useStudio(): StudioState {
@@ -202,6 +241,7 @@ export function refresh(): Promise<void> {
     try {
       const t0 = performance.now();
       const res = await api<{ runs: Generation[]; balance: number; swept?: number; error?: string }>("/api/generations");
+      if (currentUid && res.uid !== currentUid) return schedule(0); // sent before a sign-in/out: drop it, fetch again as the new account
       devLog("api", `GET /api/generations → ${res.status} in ${Math.round(performance.now() - t0)}ms`);
       if (res.data.swept) devLog("warn", `stale sweep: ${res.data.swept} stuck run(s) failed as timeout and refunded`);
       if (!res.ok) throw new SyncError("server", `Unexpected response (${res.status}): ${res.data.error ?? "no details"}.`, res.data);
@@ -278,6 +318,7 @@ async function startRemote(intent: Intent) {
         { runId: res.data.generations[0].id },
       );
     }
+    if (currentUid && res.uid !== currentUid) return; // the account changed while this was in flight
     if (res.status === 402) {
       set({ balance: res.data.balance ?? null, notice: `Not enough credits: this needs ${res.data.cost ?? estimateCost(intent)}, you have ${res.data.balance}. Nothing was charged.` });
       return;
