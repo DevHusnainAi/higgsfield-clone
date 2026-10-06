@@ -52,7 +52,9 @@ test("run: stage + inspector, then the library", async () => {
   const page = await open();
   await page.locator("#prompt").fill("Portrait photo of a dancer, 9:16");
   await page.keyboard.press("Enter");
-  await page.waitForFunction(() => /Done|error/i.test(document.querySelector("main [role=status]")?.textContent ?? ""), null, { timeout: 30_000 });
+  // Any settled state: "Done…" or any failure, which always ends "…credits returned to your balance".
+  // (Matching "error" missed the simulator's capacity failure, about 6% of runs, and timed out.)
+  await page.waitForFunction(() => /^Done|returned to your balance/.test(document.querySelector("main [role=status]")?.textContent ?? ""), null, { timeout: 30_000 });
   await audit(page, "finished run");
   await page.locator("aside").getByRole("button", { name: /^All/ }).click();
   await audit(page, "library");
