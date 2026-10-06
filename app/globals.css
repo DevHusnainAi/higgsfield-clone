@@ -1,0 +1,52 @@
+@import "tailwindcss";
+
+/* Graphite neutrals (one cool hue, 260) + one accent: Ember.
+   Accent carries dark ink text in both themes so buttons pass AA.
+   Shape lock: surfaces/inputs 12px (rounded-xl), actions full pill. */
+:root {
+  --bg: oklch(0.985 0.002 260);
+  --surface: oklch(0.965 0.003 260);
+  --surface-raised: oklch(0.995 0.001 260);
+  --line: oklch(0.9 0.005 260);
+  --fg: oklch(0.21 0.01 260);
+  --fg-muted: oklch(0.47 0.012 260);
+  --accent: oklch(0.72 0.16 48);
+  --accent-ink: oklch(0.2 0.03 48);
+  --accent-text: oklch(0.52 0.15 42);
+  --danger: oklch(0.55 0.19 25);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: oklch(0.155 0.006 260);
+    --surface: oklch(0.19 0.007 260);
+    --surface-raised: oklch(0.225 0.008 260);
+    --line: oklch(0.29 0.009 260);
+    --fg: oklch(0.95 0.004 260);
+    --fg-muted: oklch(0.71 0.012 260);
+    --accent: oklch(0.74 0.15 50);
+    --accent-ink: oklch(0.18 0.03 48);
+    --accent-text: oklch(0.78 0.13 52);
+    --danger: oklch(0.7 0.17 25);
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-line: var(--line);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-text: var(--accent-text);
+  --color-danger: var(--danger);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+}
