@@ -82,8 +82,31 @@ export async function uploadReference(file: File): Promise<string> {
   if (file.size > MAX_REFERENCE_BYTES) throw new Error("Images can be up to 5 MB.");
   const path = `${(await session()).user.id}/${crypto.randomUUID()}.${ext}`;
   const { error } = await client!.storage.from("references").upload(path, file, { contentType: file.type, upsert: false });
-  if (error) throw new Error(`Upload failed: ${error.message}`);
+  if (error) {
+    throw new Error(/reference_quota_exceeded/.test(error.message) ? `You can keep up to ${MAX_REFERENCES} start frames. Delete one to upload another.` : `Upload failed: ${error.message}`);
+  }
   return path;
+}
+
+export const MAX_REFERENCES = 10; // enforced by the enforce_reference_quota trigger
+
+/** Your uploaded start frames, newest first, with short-lived links for thumbnails. */
+export async function listReferences(): Promise<{ path: string; url: string }[]> {
+  const folder = (await session()).user.id;
+  const bucket = client!.storage.from("references");
+  const { data, error } = await bucket.list(folder, { limit: MAX_REFERENCES, sortBy: { column: "created_at", order: "desc" } });
+  if (error) throw error;
+  const paths = data.filter((f) => f.id).map((f) => `${folder}/${f.name}`); // id is null for folder placeholders
+  if (!paths.length) return [];
+  const signed = await bucket.createSignedUrls(paths, 3600);
+  if (signed.error) throw signed.error;
+  return signed.data.flatMap((d) => (d.path && d.signedUrl ? [{ path: d.path, url: d.signedUrl }] : []));
+}
+
+export async function deleteReference(path: string) {
+  await session();
+  const { error } = await client!.storage.from("references").remove([path]);
+  if (error) throw error;
 }
 
 /** Short-lived link for showing your own start frame (the bucket is private). */

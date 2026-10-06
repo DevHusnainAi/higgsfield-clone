@@ -167,6 +167,21 @@ test("references bucket: private, and users only touch files in their own folder
   assert.equal((await db.query(`delete from storage.objects where name = '${ALICE}/a.png' returning 1`)).rows.length, 1);
 });
 
+test("references quota: the 11th file in a folder is rejected; other folders and buckets are unaffected", async () => {
+  const db = await setup();
+  await db.exec(`set role authenticated; set request.jwt.claim.sub = '${ALICE}';`);
+  const put = (user: string, n: number, bucket = "references") =>
+    db.query(`insert into storage.objects (bucket_id, name) values ($1, $2)`, [bucket, `${user}/${n}.png`]);
+  for (let i = 0; i < 10; i++) await put(ALICE, i);
+  await assert.rejects(put(ALICE, 10), /reference_quota_exceeded/);
+  await db.query(`delete from storage.objects where name = '${ALICE}/0.png'`);
+  await put(ALICE, 10); // deleting frees a slot
+  await db.exec(`set request.jwt.claim.sub = '${BOB}';`);
+  await put(BOB, 0);
+  await db.exec("reset role");
+  await put(ALICE, 99, "generations");
+});
+
 test("RLS: users read only their own rows and cannot write or call functions", async () => {
   const db = await setup();
   await start(db, ALICE, 4);

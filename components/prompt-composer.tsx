@@ -3,12 +3,12 @@
 import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { ArrowUp } from "@phosphor-icons/react";
 import { cheaperAlternatives, costBreakdown, estimateCost } from "@/lib/generation";
-import { parseIntent, type IntentOverrides } from "@/lib/intent";
+import { parseIntent, type AspectRatio, type IntentOverrides } from "@/lib/intent";
 import { remoteEnabled, uploadReference } from "@/lib/remote";
 import { startGeneration, useStudio } from "@/lib/store";
 import { AdvancedSettings } from "./advanced-settings";
 import { ParamChips } from "./param-chips";
-import { nearestVideoRatio, ReferenceButton, ReferencePreview } from "./reference-picker";
+import { nearestVideoRatio, ReferenceLibrary, ReferencePreview } from "./reference-picker";
 
 export function PromptComposer({
   prompt,
@@ -27,12 +27,12 @@ export function PromptComposer({
   const { balance } = useStudio();
   const short = !empty && balance !== null && cost > balance;
   const alternatives = short ? cheaperAlternatives(intent, balance) : [];
-  const [local, setLocal] = useState<string | null>(null); // object URL of the frame being (or just) uploaded
+  const [local, setLocal] = useState<string | null>(null); // preview of the attached frame: an object URL after upload, or a library link
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
   function dropLocal() {
-    if (local) URL.revokeObjectURL(local);
+    if (local?.startsWith("blob:")) URL.revokeObjectURL(local);
     setLocal(null);
   }
 
@@ -42,7 +42,8 @@ export function PromptComposer({
     setLocal(URL.createObjectURL(file));
     setUploading(true);
     try {
-      const [reference, aspectRatio] = await Promise.all([uploadReference(file), nearestVideoRatio(file)]);
+      const [reference, { width, height }] = await Promise.all([uploadReference(file), createImageBitmap(file)]);
+      const aspectRatio = nearestVideoRatio(width, height);
       onOverridesChange((o) => ({ ...o, reference, aspectRatio }));
     } catch (err) {
       dropLocal();
@@ -50,6 +51,13 @@ export function PromptComposer({
     } finally {
       setUploading(false);
     }
+  }
+
+  function pick(frame: { path: string; url: string }, aspectRatio: AspectRatio) {
+    dropLocal();
+    setUploadError(null);
+    setLocal(frame.url);
+    onOverridesChange((o) => ({ ...o, reference: frame.path, aspectRatio }));
   }
 
   function removeReference() {
@@ -71,6 +79,8 @@ export function PromptComposer({
         e.preventDefault();
         submit();
       }}
+      // Firefox restores form-control state (incl. a button's disabled flag) on reload, before React hydrates.
+      autoComplete="off"
       className="glass flex flex-col gap-2 rounded-xl border border-line p-2 shadow-float inset-shadow-edge transition-colors focus-within:border-line-strong"
     >
       {(uploading || overrides.reference) && (
@@ -102,7 +112,15 @@ export function PromptComposer({
       <ParamChips intent={intent} overrides={overrides} onOverridesChange={onOverridesChange} />
       <div className="flex items-center gap-3 pl-1 pr-1">
         <AdvancedSettings intent={intent} overrides={overrides} onOverridesChange={onOverridesChange} />
-        {remoteEnabled && <ReferenceButton onFile={(f) => void attach(f)} disabled={uploading} />}
+        {remoteEnabled && (
+          <ReferenceLibrary
+            attached={overrides.reference ?? null}
+            uploading={uploading}
+            onUpload={(f) => void attach(f)}
+            onPick={pick}
+            onDeleted={(path) => path === overrides.reference && removeReference()}
+          />
+        )}
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg-muted" aria-live="polite">
           {empty ? "Shift + Enter for a new line" : `${costBreakdown(intent)} = ${cost}`}
         </span>
