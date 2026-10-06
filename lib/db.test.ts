@@ -82,6 +82,15 @@ test("completion charges; credit state can't drift from status", async () => {
   const done = await one<{ status: string; credit_state: string }>(db, "select * from public.complete_generation($1, 'a/b.png')", [g.id]);
   assert.deepEqual([done.status, done.credit_state], ["done", "charged"]);
   assert.equal(await balance(db, ALICE), 196);
+  assert.equal((await one<{ demo_fallback: boolean }>(db, "select demo_fallback from public.generations where id = $1", [g.id])).demo_fallback, false);
+  const fb = await start(db, ALICE, 4);
+  assert.equal(await balance(db, ALICE), 192);
+  const fbDone = await one<{ demo_fallback: boolean; credit_state: string; result_path: string }>(db, "select * from public.complete_generation($1, 'https://picsum.photos/x', true)", [fb.id]);
+  assert.deepEqual([fbDone.demo_fallback, fbDone.credit_state, fbDone.result_path], [true, "refunded", "https://picsum.photos/x"]);
+  assert.equal(await balance(db, ALICE), 196); // fallback is free
+  assert.equal((await one<{ id: string | null }>(db, "select id from public.complete_generation($1, 'y', true)", [fb.id])).id, null);
+  assert.equal(await balance(db, ALICE), 196); // and refunded only once
+  await assert.rejects(db.query("update public.generations set credit_state = 'charged', refunded_at = null where id = $1", [fb.id]), /credits_follow_status/);
   const g2 = await start(db, ALICE, 4);
   await assert.rejects(db.query("update public.generations set status = 'failed', failure_reason = 'capacity' where id = $1", [g2.id]), /credits_follow_status/);
 });

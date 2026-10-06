@@ -1,5 +1,11 @@
 // Server-only: renders one generation on Hugging Face Inference Providers and settles it in the DB.
 // Every path ends in complete_generation (charge) or fail_generation (refund); nothing is left held.
+//
+// Demo fallback: a provider 402 (our HF account is out of credit) is an upstream billing problem, not a bad
+// prompt, so instead of failing the run we complete it with a stock asset flagged demo_fallback = true,
+// and complete_generation refunds the held credits in the same statement: a fallback never costs anything.
+// The UI labels such runs everywhere. Only 402 triggers it; timeouts, cancels and other errors fail and refund.
+// Set DEMO_FALLBACK=off to fail and refund on 402 like any other provider error.
 import { InferenceClient } from "@huggingface/inference";
 import type { FailureReason } from "../generation.ts";
 import type { AspectRatio, Intent } from "../intent.ts";
@@ -15,6 +21,19 @@ export const RENDER_TIMEOUT_MS = 270_000;
 const inFlight = new Map<string, AbortController>();
 export const abortRender = (id: string) => inFlight.get(id)?.abort("cancelled");
 
+const DEMO_FALLBACK = process.env.DEMO_FALLBACK !== "off";
+const FALLBACK_DELAY_MS = 3000;
+const FALLBACK_VIDEO = "https://www.w3schools.com/html/mov_bbb.mp4";
+
+const statusOf = (err: unknown) => (err as { httpResponse?: { status?: number } })?.httpResponse?.status;
+
+/** Stock stand-in for a render: Unsplash photos via picsum (already an allowed image host) at the requested ratio. */
+function fallbackAsset(id: string, intent: Intent): string {
+  if (intent.media === "video") return FALLBACK_VIDEO;
+  const { width, height } = imageSize(intent.aspectRatio);
+  return `https://picsum.photos/seed/${id}/${width}/${height}`;
+}
+
 /** ~1 megapixel at the requested ratio, snapped to multiples of 64 (SD3 requirement). */
 function imageSize(ratio: AspectRatio) {
   const [w, h] = ratio.split(":").map(Number);
@@ -23,9 +42,12 @@ function imageSize(ratio: AspectRatio) {
 }
 
 async function render(intent: Intent, signal: AbortSignal): Promise<Blob> {
-  const hf = new InferenceClient(process.env.HF_TOKEN);
   const id = intent.model ?? DEFAULT_MODEL[intent.media];
   const spec = MODELS[id];
+  // A fal key (no "hf_" prefix) makes the client call fal directly, billed to fal; otherwise HF routes and bills.
+  const token = (spec.provider === "fal-ai" && process.env.FAL_KEY) || process.env.HF_TOKEN;
+  if (!token) throw new Error(`Set HF_TOKEN${spec.provider === "fal-ai" ? " or FAL_KEY" : ""} to render ${spec.label}`);
+  const hf = new InferenceClient(token);
   // Only send what the user set; otherwise the provider's own defaults apply.
   const common = {
     ...(intent.seed != null && { seed: intent.seed }),
@@ -82,7 +104,7 @@ async function render(intent: Intent, signal: AbortSignal): Promise<Blob> {
 
 function reasonFor(err: unknown, signal: AbortSignal): FailureReason {
   if (signal.aborted) return signal.reason === "cancelled" ? "cancelled" : "timeout";
-  const status = (err as { httpResponse?: { status?: number } })?.httpResponse?.status;
+  const status = statusOf(err);
   return status === 429 || status === 503 ? "capacity" : "provider_error";
 }
 
@@ -94,17 +116,25 @@ export async function runGeneration(row: { id: string; user_id: string; intent: 
   const timer = setTimeout(() => ctrl.abort("timeout"), RENDER_TIMEOUT_MS);
   inFlight.set(row.id, ctrl);
   try {
-    if (!process.env.HF_TOKEN) throw new Error("HF_TOKEN is not set");
     await admin.rpc("mark_generating", { p_id: row.id, p_progress: 0.05 });
-    const blob = await render(row.intent, ctrl.signal);
-    await admin.rpc("mark_generating", { p_id: row.id, p_progress: 0.9 });
+    let path: string;
+    let fallback = false;
+    try {
+      const blob = await render(row.intent, ctrl.signal);
+      await admin.rpc("mark_generating", { p_id: row.id, p_progress: 0.9 });
+      const type = blob.type || (row.intent.media === "video" ? "video/mp4" : "image/png");
+      path = `${row.user_id}/${row.id}.${EXT[type] ?? "bin"}`;
+      const upload = await admin.storage.from(BUCKET).upload(path, blob, { contentType: type, upsert: true });
+      if (upload.error) throw upload.error;
+    } catch (err) {
+      if (!DEMO_FALLBACK || statusOf(err) !== 402 || ctrl.signal.aborted) throw err;
+      console.warn(`[demo-fallback] generation ${row.id}: provider returned 402 (${MODELS[row.intent.model].hfId}); completing with a stock ${row.intent.media}`, (err as Error).message);
+      await new Promise((r) => setTimeout(r, FALLBACK_DELAY_MS));
+      path = fallbackAsset(row.id, row.intent);
+      fallback = true;
+    }
 
-    const type = blob.type || (row.intent.media === "video" ? "video/mp4" : "image/png");
-    const path = `${row.user_id}/${row.id}.${EXT[type] ?? "bin"}`;
-    const upload = await admin.storage.from(BUCKET).upload(path, blob, { contentType: type, upsert: true });
-    if (upload.error) throw upload.error;
-
-    const { error } = await admin.rpc("complete_generation", { p_id: row.id, p_result_path: path });
+    const { error } = await admin.rpc("complete_generation", { p_id: row.id, p_result_path: path, p_demo_fallback: fallback });
     if (error) throw error;
   } catch (err) {
     const reason = reasonFor(err, ctrl.signal);

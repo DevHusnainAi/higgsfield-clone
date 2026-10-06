@@ -17,7 +17,7 @@ const EMPTY = {
 } satisfies Record<LibraryFilter, unknown>;
 
 function tileMeta(gen: Generation): string {
-  if (gen.status === "done") return `${gen.credits.amount} credits`;
+  if (gen.status === "done") return gen.demoFallback ? "Stock fallback, free" : `${gen.credits.amount} credits`;
   if (gen.status === "failed") return `Failed, ${gen.credits.amount} refunded`;
   if (gen.status === "generating") return `Generating ${Math.round(gen.progress * 100)}%`;
   return "Queued";

@@ -1,5 +1,5 @@
 // Generation lifecycle: queued -> generating -> done | failed (always refunded).
-// Credits are held at submit, charged only on success, refunded on any failure.
+// Credits are held at submit, charged only on a real render, refunded on any failure or demo fallback.
 import { DURATION, type AspectRatio, type Intent, type IntentOverrides } from "./intent.ts";
 import { DEFAULT_MODEL, MAX_SEED, MODELS, modelsFor } from "./models.ts";
 
@@ -17,7 +17,14 @@ interface Base {
 export type Generation =
   | (Base & { status: "queued"; queuePosition: number; credits: { amount: number; state: "held" } })
   | (Base & { status: "generating"; progress: number; credits: { amount: number; state: "held" } })
-  | (Base & { status: "done"; resultUrl: string; credits: { amount: number; state: "charged" } })
+  | (Base & { status: "done"; resultUrl: string; demoFallback?: undefined; credits: { amount: number; state: "charged" } })
+  | (Base & {
+      status: "done";
+      resultUrl: string;
+      /** Upstream refused on billing (402): resultUrl is a stock asset, not a render of the prompt, so it's free. */
+      demoFallback: true;
+      credits: { amount: number; state: "refunded"; refundedAt: number };
+    })
   | (Base & {
       status: "failed";
       reason: FailureReason;
@@ -170,7 +177,7 @@ export function statusMessage(gen: Generation): string {
       return stages[Math.min(stages.length - 1, Math.floor(gen.progress * stages.length))];
     }
     case "done":
-      return `Done. ${gen.credits.amount} credits used.`;
+      return gen.demoFallback ? `Done with a stock fallback. ${gen.credits.amount} credits returned to your balance.` : `Done. ${gen.credits.amount} credits used.`;
     case "failed":
       return `${FAILURE_TEXT[gen.reason]}. ${gen.credits.amount} credits returned to your balance.`;
   }

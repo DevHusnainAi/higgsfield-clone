@@ -56,9 +56,10 @@ export function GenerationCard({ gen, onRemix }: { gen: Generation; onRemix: (ge
           <p role="status" className={gen.status === "failed" ? "text-sm text-danger" : "text-sm text-fg"}>
             {statusMessage(gen)}
           </p>
-          <p className="truncate text-xs text-fg-muted">
+          <p className="text-xs text-pretty text-fg-muted">
             {running && `${gen.credits.amount} credits on hold. Charged only if it finishes.`}
             {gen.status === "done" && gen.intent.media === "video" && !/\.(mp4|webm)$/i.test(gen.resultUrl) && "Preview frame (local simulator)."}
+            {gen.status === "done" && gen.demoFallback && "Stock fallback asset: the provider hit its billing limit (402), so this isn't a render of your prompt and wasn't charged."}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">

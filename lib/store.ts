@@ -12,6 +12,7 @@ const MAX_BACKOFF_MS = 60_000;
 const FAVORITES_KEY = "studio.favorites.v1";
 const MAX_RUNS = 100;
 const STATUSES = new Set(["queued", "generating", "done", "failed"]);
+const FALLBACK_NOTICE = "Upstream API limit reached (402). Displaying fallback asset to preserve application state.";
 
 export type LibraryFilter = "all" | "images" | "videos" | "favorites";
 export type View = "create" | LibraryFilter;
@@ -169,7 +170,10 @@ export function refresh(): Promise<void> {
       if (!res.ok) throw new SyncError("server", `Unexpected response (${res.status}): ${res.data.error ?? "no details"}.`, res.data);
       if (failures > 0) console.info(`[studio:sync] recovered after ${failures} failed attempt(s)`);
       failures = 0;
-      set({ runs: res.data.runs, balance: res.data.balance, syncIssue: null });
+      // Toast once per run that just finished on the demo fallback (not for old ones already in history).
+      const wasActive = new Set(getState().runs.filter(isActive).map((g) => g.id));
+      const fellBack = res.data.runs.some((g) => g.status === "done" && g.demoFallback && wasActive.has(g.id));
+      set({ runs: res.data.runs, balance: res.data.balance, syncIssue: null, ...(fellBack && { notice: FALLBACK_NOTICE }) });
       if (res.data.runs.some(isActive)) schedule(POLL_MS);
     } catch (err) {
       failures++;
