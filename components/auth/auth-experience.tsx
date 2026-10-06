@@ -2,42 +2,93 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, X } from "@phosphor-icons/react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { ArrowLeft, Check, X } from "@phosphor-icons/react";
 import { Logo } from "@/components/logo";
-import { AuthPanel } from "./auth-panel";
+import { AuthPanel, type AuthStatus } from "./auth-panel";
 import { Creature, type Field, type Mood } from "./creature";
 
-/** Left side: Iris on the stage tier, framed by viewfinder corners (the logo's frame, at panel scale).
-    One instance at every width: a short band above the form on phones, the full half from md up. */
-function CreaturePanel(props: { field: Field; peek: boolean; mood: Mood; emailRef: React.RefObject<HTMLInputElement | null>; className?: string }) {
+/** The stage badge, by status. Each line is true whenever it shows: no invented technical theatre. */
+const BADGE: Record<AuthStatus, { label: string; tone: "muted" | "live" | "done" | "error" }> = {
+  idle: { label: "Iris is standing guard", tone: "muted" },
+  google: { label: "Opening Google sign-in", tone: "live" },
+  sending: { label: "Sending your link", tone: "live" },
+  waiting: { label: "Waiting for email confirmation", tone: "live" },
+  signedIn: { label: "Signed in. Taking you back", tone: "done" },
+  error: { label: "That didn't go through", tone: "error" },
+};
+
+/**
+ * Floating glass status pill. The dot shows real state (pulsing while something is in flight), the only
+ * kind of dot the design rules allow. aria-hidden: the form's own status line announces the same thing.
+ */
+function StatusBadge({ status }: { status: AuthStatus }) {
+  const { label, tone } = BADGE[status];
+  return (
+    <div
+      aria-hidden
+      className="glass-media absolute bottom-6 left-1/2 z-10 hidden h-8 md:flex -translate-x-1/2 items-center gap-2 whitespace-nowrap rounded-full border border-white/10 pl-2.5 pr-3.5 text-2xs font-medium text-fg inset-shadow-edge"
+    >
+      {tone === "done" ? (
+        <Check size={12} weight="bold" className="text-accent-text" />
+      ) : (
+        <span
+          className={`size-1.5 rounded-full ${tone === "error" ? "bg-danger" : tone === "live" ? "bg-accent motion-safe:animate-pulse" : "bg-fg-muted"}`}
+        />
+      )}
+      <span key={status} className="transition-opacity duration-150 starting:opacity-0">
+        {label}
+      </span>
+    </div>
+  );
+}
+
+/** Left side: Iris on the stage, over a faint dot grid, framed by viewfinder corners (the logo's frame). */
+function CreaturePanel(props: {
+  field: Field;
+  peek: boolean;
+  mood: Mood;
+  status: AuthStatus;
+  emailRef: RefObject<HTMLInputElement | null>;
+  radarRef: RefObject<HTMLDivElement | null>;
+  className?: string;
+}) {
   const corner = "pointer-events-none absolute size-5 border-line-strong";
   return (
-    <div className={`relative flex flex-col items-center justify-center gap-4 bg-stage p-4 md:p-10 ${props.className ?? ""}`}>
+    <div className={`auth-stage relative isolate flex flex-col items-center justify-center bg-stage p-4 md:p-10 ${props.className ?? ""}`}>
       <span aria-hidden className={`${corner} left-4 top-4 rounded-tl-md border-l border-t`} />
       <span aria-hidden className={`${corner} right-4 top-4 rounded-tr-md border-r border-t`} />
       <span aria-hidden className={`${corner} bottom-4 left-4 rounded-bl-md border-b border-l`} />
       <span aria-hidden className={`${corner} bottom-4 right-4 rounded-br-md border-b border-r`} />
-      <div className="w-32 md:w-full md:max-w-[18rem]">
-        <Creature field={props.field} peek={props.peek} mood={props.mood} emailRef={props.emailRef} />
+      <div className="relative z-[1] w-32 md:w-full md:max-w-[18rem]">
+        <Creature
+          field={props.field}
+          peek={props.peek}
+          mood={props.mood}
+          emailRef={props.emailRef}
+          watch={props.status === "waiting" ? props.radarRef : null}
+        />
       </div>
-      <p className="hidden text-2xs text-fg-muted md:block">Iris won&rsquo;t peek at your code.</p>
+      {/* Hidden on phones (short band): the form's status line carries the same information. */}
+      <StatusBadge status={props.status} />
     </div>
   );
 }
 
 /**
  * Sign-in as a 50/50 page (direct load or refresh of /sign-in) or as a modal over the studio (in-app
- * navigation, intercepted by app/(studio)/@modal/(.)sign-in). Same form and creature in both.
+ * navigation, intercepted by app/(studio)/@modal/(.)sign-in). Same form, stage and creature in both.
  */
 export function AuthExperience({ variant }: { variant: "page" | "modal" }) {
   const router = useRouter();
   const dialog = useRef<HTMLDialogElement>(null);
   const emailRef = useRef<HTMLInputElement>(null);
+  const radarRef = useRef<HTMLDivElement>(null);
   const [field, setField] = useState<Field>(null);
   const [peek, setPeek] = useState(false);
   const [mood, setMood] = useState<Mood>({ kind: "idle", at: 0 });
-  const signals = { onField: setField, onPeek: setPeek, onMood: setMood };
+  const [status, setStatus] = useState<AuthStatus>("idle");
+  const signals = { onField: setField, onPeek: setPeek, onMood: setMood, onStatus: setStatus };
 
   // Modal: closing (X, Esc, backdrop, success) goes back in history, which unmounts the intercepted route.
   const onDone = useCallback(() => (variant === "modal" ? dialog.current?.close() : router.replace("/")), [variant, router]);
@@ -51,7 +102,8 @@ export function AuthExperience({ variant }: { variant: "page" | "modal" }) {
     return () => d.removeEventListener("close", onClose);
   }, [variant, router]);
 
-  const creature = { field, peek, mood, emailRef };
+  const stage = { field, peek, mood, status, emailRef, radarRef };
+  const panel = { onDone, emailRef, radarRef, signals };
 
   if (variant === "page") {
     return (
@@ -59,17 +111,18 @@ export function AuthExperience({ variant }: { variant: "page" | "modal" }) {
         <div className="relative flex flex-col pt-16 md:min-h-[100dvh] md:pt-0">
           <Link
             href="/"
-            className="absolute left-6 top-6 z-10 flex h-9 items-center gap-2 rounded-full border border-line px-3.5 text-ui font-medium text-fg-muted inset-shadow-edge transition hover:border-line-strong hover:text-fg active:scale-[0.98] md:left-8 md:top-8"
+            className="absolute left-6 top-6 z-20 flex h-9 items-center gap-2 rounded-full border border-line bg-bg/60 px-3.5 text-ui font-medium text-fg-muted inset-shadow-edge transition hover:border-line-strong hover:text-fg active:scale-[0.98] md:left-8 md:top-8"
           >
             <ArrowLeft size={14} weight="bold" aria-hidden /> Back to Studio
           </Link>
-          <CreaturePanel {...creature} className="h-44 md:h-auto md:flex-1" />
-          <span className="absolute bottom-8 left-8 hidden items-center gap-2 text-[15px] font-semibold tracking-tight text-fg md:flex">
+          {/* One instance at every width: a short band on phones, the full half from md up. */}
+          <CreaturePanel {...stage} className="h-44 md:h-auto md:flex-1" />
+          <span className="absolute bottom-8 left-8 z-20 hidden items-center gap-2 text-[15px] font-semibold tracking-tight text-fg md:flex">
             <Logo /> Intent Studio
           </span>
         </div>
-        <main className="flex items-start justify-center border-line bg-bg px-4 py-8 md:items-center md:border-l md:py-10">
-          <AuthPanel heading="h1" onDone={onDone} emailRef={emailRef} signals={signals} />
+        <main className="flex items-start justify-center border-line bg-bg px-6 py-8 md:items-center md:border-l md:px-12 md:py-12 lg:px-16">
+          <AuthPanel heading="h1" {...panel} />
         </main>
       </div>
     );
@@ -83,8 +136,8 @@ export function AuthExperience({ variant }: { variant: "page" | "modal" }) {
       className="m-auto max-h-[calc(100dvh-2rem)] w-[min(56rem,calc(100vw-2rem))] overflow-y-auto rounded-2xl border border-line bg-bg p-0 text-fg shadow-float backdrop:bg-[oklch(0.08_0.01_260/0.6)] opacity-0 open:opacity-100 starting:open:opacity-0 motion-safe:scale-[0.98] motion-safe:open:scale-100 motion-safe:starting:open:scale-[0.98] transition-[opacity,scale,overlay,display] transition-discrete duration-200 ease-[cubic-bezier(0.16,1,0.3,1)]"
     >
       <div className="grid md:grid-cols-[44%_1fr]">
-        <CreaturePanel {...creature} className="hidden md:flex" />
-        <div className="relative flex items-center justify-center px-6 py-12 md:px-10">
+        <CreaturePanel {...stage} className="hidden min-h-[34rem] md:flex" />
+        <div className="relative flex items-center justify-center px-8 py-10">
           <button
             type="button"
             onClick={() => dialog.current?.close()}
@@ -93,7 +146,7 @@ export function AuthExperience({ variant }: { variant: "page" | "modal" }) {
           >
             <X size={16} weight="bold" />
           </button>
-          <AuthPanel heading="h2" onDone={onDone} emailRef={emailRef} signals={signals} />
+          <AuthPanel heading="h2" {...panel} />
         </div>
       </div>
     </dialog>

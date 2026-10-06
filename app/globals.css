@@ -161,3 +161,43 @@ html:has(dialog[open]:modal) {
   from { transform: translateX(-100%); }
   to { transform: translateX(250%); }
 }
+
+/* Corner radius rule (one system, applied everywhere):
+   - full pill: floating or compact actions (Generate, chips, the stage badge, icon buttons)
+   - 12px (rounded-xl): form controls and full-width form buttons
+   - 16px (rounded-2xl): cards, panels and dialogs */
+
+/* Sign-in: waiting-for-the-link rings. Transform + opacity only; static under reduced motion. */
+@keyframes radar {
+  0% { transform: scale(1); opacity: 0.6; }
+  60% { opacity: 0.3; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+
+/* Busy primary button: a light sweep across the fill instead of a spinner; still under reduced motion. */
+@utility btn-busy {
+  background-image: linear-gradient(100deg, transparent 30%, oklch(1 0 0 / 0.22) 50%, transparent 70%);
+  background-size: 200% 100%;
+  @media (prefers-reduced-motion: no-preference) {
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+}
+
+/* Iris's stage: a faint dot grid fading out toward the edges, plus a soft lift behind Iris. The grid is also
+   what the glass status badge blurs: backdrop-filter shows nothing over a flat fill. Fixed to the panel and
+   pointer-events-none, never on a scrolling container. */
+.auth-stage::before,
+.auth-stage::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.auth-stage::before {
+  background-image: radial-gradient(oklch(1 0 0 / 0.05) 1px, transparent 1px);
+  background-size: 16px 16px;
+  mask-image: radial-gradient(closest-side, black 35%, transparent);
+}
+.auth-stage::after {
+  background: radial-gradient(closest-side, oklch(1 0 0 / 0.03), transparent);
+}

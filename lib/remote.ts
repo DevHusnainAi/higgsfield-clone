@@ -6,6 +6,11 @@ const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
 export const remoteEnabled = Boolean(url && key);
+/**
+ * Offer "Enter a code instead": only once the Supabase email templates include {{ .Token }}. Supabase's
+ * defaults send the link alone, and a code field the email can't fill would be broken UI.
+ */
+export const emailCodes = process.env.NEXT_PUBLIC_EMAIL_CODES === "on";
 
 /**
  * Why a sync failed. `retry` says whether trying again on a timer can help:
@@ -229,8 +234,23 @@ export async function sendMagicLink(email: string): Promise<"upgrade" | "existin
 
 /** Read-only: what kind of session this browser has. Never creates a guest (the sign-in page must not). */
 export async function sessionKind(): Promise<"none" | "guest" | "user"> {
+  if (!remoteEnabled) return "none";
   const user = (await supabase().auth.getSession()).data.session?.user;
   return !user ? "none" : user.is_anonymous ? "guest" : "user";
+}
+
+/**
+ * Calls `cb` once this browser becomes signed in to a permanent account. supabase-js broadcasts auth events
+ * between tabs (a BroadcastChannel named after its storage key), so opening the email link in another tab
+ * of this browser completes the waiting tab too. Creates no session. Returns an unsubscribe function.
+ */
+export function watchSignIn(cb: () => void): () => void {
+  if (!remoteEnabled) return () => {};
+  const { data } = supabase().auth.onAuthStateChange((event, s) => {
+    // Strict: only an explicit permanent user counts (a guest's email-change request also fires USER_UPDATED).
+    if ((event === "SIGNED_IN" || event === "USER_UPDATED") && s?.user.is_anonymous === false) cb();
+  });
+  return () => data.subscription.unsubscribe();
 }
 
 /**

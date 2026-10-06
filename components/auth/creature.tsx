@@ -21,39 +21,61 @@ const SHAKE_MS = 360;
 
 const reduceMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-/** Where the text caret is in an input, in viewport px: Iris reads along as you type. */
-function caretPoint(input: HTMLInputElement): Vec {
-  const r = input.getBoundingClientRect();
+const POINTER_HOLD_MS = 1500; // while waiting, a moving pointer wins the gaze for this long
+const q = (n: number) => Math.round(n * 100) / 100; // stable transform strings: no sub-pixel shimmer
+
+let measureCtx: CanvasRenderingContext2D | null = null;
+/**
+ * The caret's x offset inside an input, in px. Measured on input/selection events only (one shared canvas),
+ * never per frame: per-frame text measurement was the main source of reading-mode jitter.
+ */
+function caretOffset(input: HTMLInputElement): number {
+  measureCtx ??= document.createElement("canvas").getContext("2d")!;
   const cs = getComputedStyle(input);
-  const ctx = document.createElement("canvas").getContext("2d")!;
-  ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  measureCtx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
   const before = input.value.slice(0, input.selectionStart ?? input.value.length);
   const pad = parseFloat(cs.paddingLeft);
-  const x = Math.min(r.left + pad + ctx.measureText(before).width - input.scrollLeft, r.right - parseFloat(cs.paddingRight));
-  return { x, y: r.top + r.height / 2 };
+  return Math.min(pad + measureCtx.measureText(before).width - input.scrollLeft, input.clientWidth - parseFloat(cs.paddingRight));
 }
 
 /**
  * Iris, the sign-in creature. Decorative (aria-hidden): every state it shows is also stated in the form.
- * Tracks the pointer, reads along the email field, covers its eyes while the code field has focus,
- * peeks when the code is shown, hops on success, shakes on error. All motion stops under reduced motion.
+ * Tracks the pointer, reads along the email field, watches the radar while waiting for the email link,
+ * covers its eyes while the code field has focus, peeks when the code is shown, hops on success, shakes
+ * on error. All motion stops under reduced motion.
  */
-export function Creature({ field, peek, mood, emailRef }: { field: Field; peek: boolean; mood: Mood; emailRef: RefObject<HTMLInputElement | null> }) {
+export function Creature({
+  field,
+  peek,
+  mood,
+  emailRef,
+  watch,
+}: {
+  field: Field;
+  peek: boolean;
+  mood: Mood;
+  emailRef: RefObject<HTMLInputElement | null>;
+  /** While set, Iris watches this element (the radar) unless the pointer moved in the last 1.5s. */
+  watch: RefObject<HTMLElement | null> | null;
+}) {
   const svg = useRef<SVGSVGElement>(null);
   const clip = `iris-eye-${useId().replace(/:/g, "")}`; // unique per instance: url(#…) resolves to the first match
-  const input = useRef({ field, peek, mood }); // latest props, read by the frame loop
+  const input = useRef({ field, peek, mood, watch }); // latest props, read by the frame loop
   const wake = useRef<() => void>(() => {});
 
   useEffect(() => {
-    input.current = { field, peek, mood };
+    input.current = { field, peek, mood, watch };
     wake.current();
-  }, [field, peek, mood]);
+  }, [field, peek, mood, watch]);
 
   useEffect(() => {
     const el = svg.current!;
     // The animated groups, by data-part: written straight to the DOM each frame, no React renders.
     const p = Object.fromEntries([...el.querySelectorAll<SVGGElement>("[data-part]")].map((n) => [n.dataset.part!, n]));
     let pointer: Vec | null = null;
+    let movedAt = -Infinity;
+    let holdTimer: ReturnType<typeof setTimeout> | undefined;
+    let caretX = 0; // px from the email field's left edge; refreshed on input/selection events
     let frame = 0;
     let last = 0;
     const pupils = EYES.map(() => ({ x: 0, y: 0 }));
@@ -67,14 +89,16 @@ export function Creature({ field, peek, mood, emailRef }: { field: Field; peek: 
     let shakeStart = -Infinity;
 
     const set = (k: string, t: string) => p[k]?.setAttribute("transform", t);
+    const centre = (r: DOMRect): Vec => ({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
 
     const tick = (now: number) => {
       const dt = Math.min(0.1, last ? (now - last) / 1000 : 1 / 60);
       last = now;
       const reduce = reduceMotion();
-      const { field, peek, mood } = input.current;
+      const { field, peek, mood, watch } = input.current;
       const cover = field === "code";
-      el.dataset.state = cover ? (peek ? "peek" : "cover") : field === "email" ? "read" : "track";
+      const watching = !!watch?.current && now - movedAt > POINTER_HOLD_MS;
+      el.dataset.state = cover ? (peek ? "peek" : "cover") : field === "email" ? "read" : watching ? "watch" : "track";
 
       // Reactions to a new mood (success hop / error shake), once per mood change.
       if (mood.at !== moodSeen) {
@@ -83,11 +107,18 @@ export function Creature({ field, peek, mood, emailRef }: { field: Field; peek: 
         if (!reduce && mood.kind === "error") shakeStart = now;
       }
 
-      // Gaze target: the caret while typing the email, otherwise the pointer, otherwise straight ahead.
+      // Gaze target: the caret while typing the email, the radar while waiting, else the pointer, else ahead.
+      // All layout reads happen here, before any writes below, so a frame never forces a second layout.
       const box = el.getBoundingClientRect();
       const scale = box.width / 240;
       const toClient = (v: Vec) => ({ x: box.left + v.x * scale, y: box.top + v.y * scale });
-      const target = reduce ? null : field === "email" && emailRef.current ? caretPoint(emailRef.current) : pointer;
+      let target: Vec | null = null;
+      if (!reduce) {
+        const emailBox = field === "email" ? emailRef.current?.getBoundingClientRect() : undefined;
+        if (emailBox) target = { x: emailBox.left + caretX, y: emailBox.top + emailBox.height / 2 };
+        else if (watching) target = centre(watch!.current!.getBoundingClientRect());
+        else target = pointer;
+      }
       const rate = target ? RATE.pupil : RATE.home;
 
       let busy = false;
@@ -101,7 +132,7 @@ export function Creature({ field, peek, mood, emailRef }: { field: Field; peek: 
         const g = target ? gaze(target, toClient(eye), PUPIL_TRAVEL, 300 * scale) : { x: 0, y: 0 };
         pupils[i].x = ease(pupils[i].x, g.x, rate);
         pupils[i].y = ease(pupils[i].y, g.y, rate);
-        set(`pupil${i}`, `translate(${pupils[i].x} ${pupils[i].y})`);
+        set(`pupil${i}`, `translate(${q(pupils[i].x)} ${q(pupils[i].y)})`);
       });
 
       // Head and brackets lean toward the target; nearer parts move more (depth).
@@ -115,7 +146,7 @@ export function Creature({ field, peek, mood, emailRef }: { field: Field; peek: 
       paws.forEach((s, i) => {
         paws[i] = reduce ? { x: pawTo[i], v: 0 } : springStep(s, pawTo[i], PAW_SPRING.stiffness, PAW_SPRING.damping, dt);
         if (Math.abs(paws[i].x - pawTo[i]) > 0.002 || Math.abs(paws[i].v) > 0.01) busy = true;
-        set(`paw${i}`, `translate(0 ${paws[i].x * PAW_DROP})`);
+        set(`paw${i}`, `translate(0 ${q(paws[i].x * PAW_DROP)})`);
       });
       el.dataset.covered = String(cover);
 
@@ -131,7 +162,7 @@ export function Creature({ field, peek, mood, emailRef }: { field: Field; peek: 
       lids.forEach((v, i) => {
         lids[i] = reduce ? lidTo[i] : ease(v, lidTo[i], RATE.lid);
         const top = EYES[i].y - EYE_R;
-        set(`lid${i}`, `translate(0 ${top}) scale(1 ${lids[i]}) translate(0 ${-top})`);
+        set(`lid${i}`, `translate(0 ${top}) scale(1 ${q(lids[i])}) translate(0 ${-top})`);
       });
       if (happy) busy = true;
 
@@ -146,8 +177,8 @@ export function Creature({ field, peek, mood, emailRef }: { field: Field; peek: 
         shake = SHAKE[k] + (SHAKE[k + 1] - SHAKE[k]) * (f - k);
         busy = true;
       }
-      set("head", `translate(${head.x + shake} ${head.y + hop.x}) rotate(${head.r} ${BODY.x} ${BODY.y})`);
-      set("frame", `translate(${head.x / 3} ${head.y / 3})`);
+      set("head", `translate(${q(head.x + shake)} ${q(head.y + hop.x)}) rotate(${q(head.r)} ${BODY.x} ${BODY.y})`);
+      set("frame", `translate(${q(head.x / 3)} ${q(head.y / 3)})`);
 
       // Asleep once settled; woken by pointer moves, caret moves, prop changes and the blink heartbeat.
       frame = busy ? requestAnimationFrame(tick) : 0;
@@ -160,13 +191,21 @@ export function Creature({ field, peek, mood, emailRef }: { field: Field; peek: 
     const onMove = (e: PointerEvent) => {
       if (e.pointerType !== "mouse" && e.pointerType !== "pen") return; // touch: focus-driven only
       pointer = { x: e.clientX, y: e.clientY };
+      movedAt = performance.now();
       wake.current();
+      // The loop may be asleep when the pointer hold ends: wake it exactly then, not on the next heartbeat.
+      clearTimeout(holdTimer);
+      holdTimer = setTimeout(() => wake.current(), POINTER_HOLD_MS + 20);
     };
     const onLeave = () => {
       pointer = null;
       wake.current();
     };
-    const onCaret = () => input.current.field === "email" && wake.current();
+    const onCaret = () => {
+      if (input.current.field !== "email" || !emailRef.current) return;
+      caretX = caretOffset(emailRef.current);
+      wake.current();
+    };
     // Blinks need a heartbeat even when nothing moves.
     const blinker = setInterval(() => wake.current(), 1000);
 
@@ -174,25 +213,21 @@ export function Creature({ field, peek, mood, emailRef }: { field: Field; peek: 
     document.documentElement.addEventListener("pointerleave", onLeave);
     window.addEventListener("blur", onLeave);
     document.addEventListener("selectionchange", onCaret);
+    document.addEventListener("input", onCaret, true);
+    document.addEventListener("focusin", onCaret);
     wake.current();
     return () => {
       cancelAnimationFrame(frame);
       clearInterval(blinker);
+      clearTimeout(holdTimer);
       window.removeEventListener("pointermove", onMove);
       document.documentElement.removeEventListener("pointerleave", onLeave);
       window.removeEventListener("blur", onLeave);
       document.removeEventListener("selectionchange", onCaret);
+      document.removeEventListener("input", onCaret, true);
+      document.removeEventListener("focusin", onCaret);
     };
   }, [emailRef]);
-
-  const mouth =
-    mood.kind === "happy" ? (
-      <path d="M108 160 Q120 172 132 160" />
-    ) : mood.kind === "error" ? (
-      <circle cx="120" cy="164" r="5" />
-    ) : (
-      <path d="M110 164 H130" />
-    );
 
   return (
     <svg ref={svg} viewBox="0 0 240 240" aria-hidden className="w-full max-w-[18rem] overflow-hidden" data-state="track">
@@ -227,8 +262,11 @@ export function Creature({ field, peek, mood, emailRef }: { field: Field; peek: 
           </g>
         ))}
 
-        <g className="fill-none stroke-fg-muted" strokeWidth="2.5" strokeLinecap="round">
-          {mouth}
+        {/* All three mouths are drawn; the mood cross-fades between them instead of swapping shapes. */}
+        <g className="fill-none stroke-fg-muted [&>*]:transition-opacity [&>*]:duration-150" strokeWidth="2.5" strokeLinecap="round">
+          <path d="M110 164 H130" className={mood.kind === "idle" ? "" : "opacity-0"} />
+          <path d="M108 160 Q120 172 132 160" className={mood.kind === "happy" ? "" : "opacity-0"} />
+          <circle cx="120" cy="164" r="5" className={mood.kind === "error" ? "" : "opacity-0"} />
         </g>
       </g>
 
