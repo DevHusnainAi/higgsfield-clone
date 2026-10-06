@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  check:
+    name: Types, lint, tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx next typegen # route types (LayoutProps etc.) for tsc
+      - run: npx tsc --noEmit
+      - run: npm run lint
+      # Unit tests + the real migrations against PGlite (Postgres in WASM): credits, RLS, merges.
+      - run: npm test
+      # No Supabase env: builds the local (simulated) mode, which needs no secrets.
+      - run: npm run build
+
+  a11y:
+    name: Accessibility (axe, WCAG 2.2 AA)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright-core install --with-deps chromium
+      - run: npm run build
+      - name: Start the app (local mode)
+        run: |
+          npm start &
+          for i in $(seq 1 30); do curl -sf http://localhost:3000 >/dev/null && exit 0; sleep 1; done
+          echo "server did not start" && exit 1
+      - run: npm run test:a11y
