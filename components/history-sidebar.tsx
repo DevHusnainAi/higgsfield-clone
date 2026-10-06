@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useRef, type ComponentType, type ReactNode } from "react";
 import { CheckCircle, CircleNotch, FilmStrip, Heart, ImageSquare, List, Plus, Sparkle, SquaresFour, Terminal, WarningCircle, X, type IconProps } from "@phosphor-icons/react";
 import { AccountRow } from "@/components/account";
+import { Logo } from "@/components/logo";
 import { isVideo } from "@/components/result-media";
 import type { Generation } from "@/lib/generation";
 import { setDevConsole, useDevConsoleOpen } from "@/lib/dev-log";
@@ -156,7 +157,9 @@ function SidebarBody({ onNavigate, onClose }: { onNavigate?: () => void; onClose
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-16 shrink-0 items-center justify-between gap-2 px-5">
-        <span className="flex-1 text-[15px] font-semibold tracking-tight">Studio</span>
+        <span className="flex flex-1 items-center gap-2 text-[15px] font-semibold tracking-tight">
+          <Logo /> Intent Studio
+        </span>
         <button onClick={go(newGeneration)} aria-label="New generation" className={iconButton}>
           <Plus size={14} weight="bold" />
         </button>
@@ -259,7 +262,9 @@ function MobileBar() {
           </>
         )}
       </button>
-      <span className="text-[15px] font-semibold tracking-tight">Studio</span>
+      <span className="flex items-center gap-2 text-[15px] font-semibold tracking-tight">
+        <Logo /> Intent Studio
+      </span>
       <button onClick={newGeneration} aria-label="New generation" className={`${iconButton} size-10`}>
         <Plus size={16} weight="bold" />
       </button>

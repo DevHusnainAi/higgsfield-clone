@@ -14,8 +14,10 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Studio",
-  description: "Describe what you want to make. The settings follow.",
+  title: "Intent Studio",
+  description: "Describe what you want to make. See the exact cost before you run it, and failed runs refund themselves.",
+  // Absolute URLs for the Open Graph image; Vercel sets VERCEL_PROJECT_PRODUCTION_URL in production.
+  metadataBase: new URL(process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "http://localhost:3000"),
 };
 
 // Dark before CSS arrives: no white flash on first paint, dark native controls, dark mobile browser chrome.

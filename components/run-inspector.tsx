@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { estimateCost, type Generation } from "@/lib/generation";
 import type { Intent } from "@/lib/intent";
 import { MODELS } from "@/lib/models";
-import { title } from "./param-chips";
+import { title } from "@/lib/labels";
 
 const CREDIT_STATE = { held: "on hold", charged: "charged", refunded: "refunded" } as const;
 

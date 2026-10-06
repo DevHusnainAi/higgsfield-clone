@@ -6,10 +6,10 @@ import {
   ASPECT_RATIOS, CAMERA_MOVES, DURATION, parseIntent, VIDEO_RATIOS,
   type Intent, type IntentField, type IntentOverrides,
 } from "@/lib/intent";
+import { title } from "@/lib/labels";
 
 type Value = string | number | null;
 
-export const title = (s: string) => (s === "fpv" ? "FPV drone" : s.charAt(0).toUpperCase() + s.slice(1).replace("-", " "));
 
 const FIELD_LABEL: Record<IntentField, string> = { media: "Format", camera: "Camera", aspectRatio: "Aspect ratio", durationSec: "Duration" };
 

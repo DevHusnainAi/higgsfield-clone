@@ -3,9 +3,9 @@
 import Image from "next/image";
 import { ArrowsClockwise, FilmStrip } from "@phosphor-icons/react";
 import { isVideo, ResultMedia } from "@/components/result-media";
-import { estimateCost, type Generation } from "@/lib/generation";
-import { parseIntent, type Intent } from "@/lib/intent";
-import { title } from "./param-chips";
+import type { Generation } from "@/lib/generation";
+import { parseIntent } from "@/lib/intent";
+import { intentLabels } from "@/lib/labels";
 
 // Each preset exercises a different part of the parser. Photos (Unsplash, via picsum ids) were picked to match
 // each prompt and are self-hosted in public/presets at the preset's aspect ratio: no runtime CDN dependency.
@@ -23,17 +23,6 @@ const PRESETS: { id: number; prompt: string }[] = [
   { id: 1084, prompt: "Walruses resting on a pale shore, documentary photo, 4:3" },
   { id: 1018, prompt: "Green valley under rolling clouds, timelapse, 6 seconds" },
 ];
-
-/** What the parser reads from a prompt, most important first; tiles show at most 4 (cost drops first, then duration). */
-export function intentLabels(intent: Intent): string[] {
-  return [
-    title(intent.media),
-    intent.camera && title(intent.camera),
-    intent.aspectRatio,
-    intent.durationSec && `${intent.durationSec}s`,
-    `${estimateCost(intent)} credits`,
-  ].filter((x): x is string => !!x);
-}
 
 const ratio = (r: string) => r.split(":").map(Number) as [number, number];
 
