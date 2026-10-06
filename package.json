@@ -1,5 +1,5 @@
 {
-  "name": "higgsfield-clone",
+  "name": "intent-studio",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -31,5 +31,6 @@
     "playwright-core": "^1.63.0",
     "tailwindcss": "^4",
     "typescript": "^5"
-  }
+  },
+  "license": "MIT"
 }
