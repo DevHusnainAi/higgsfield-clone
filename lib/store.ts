@@ -225,6 +225,7 @@ async function startRemote(intent: Intent) {
       set({ balance: res.data.balance ?? null, notice: `Not enough credits: this needs ${res.data.cost ?? estimateCost(intent)}, you have ${res.data.balance}. Nothing was charged.` });
       return;
     }
+    if (res.status === 429) return set({ notice: `${res.data.error ?? "Too many requests."} Nothing was charged.` });
     const started = res.data.generations;
     if (!res.ok || !started?.length) throw new SyncError("server", `Couldn't start the generation: ${res.data.error ?? res.status}.`, res.data);
     started.toReversed().forEach(upsert);
@@ -242,6 +243,7 @@ export function cancelGeneration(id: string) {
   if (!remoteEnabled) return void controllers.get(id)?.abort();
   void api<{ generation?: Generation; balance?: number }>(`/api/generations/${id}/cancel`, { method: "POST" })
     .then((res) => {
+      if (res.status === 429) set({ notice: "Too many requests. Try cancelling again in a few minutes." });
       if (res.data.generation) upsert(res.data.generation);
       if (typeof res.data.balance === "number") set({ balance: res.data.balance });
     })

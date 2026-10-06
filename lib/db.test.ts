@@ -18,6 +18,9 @@ const STUBS = `
   grant execute on function auth.uid() to authenticated;
   create schema storage;
   create table storage.buckets (id text primary key, name text, public boolean);
+  -- Like Supabase: client roles get full table privileges by default, so the migration must revoke them.
+  grant usage on schema public to anon, authenticated;
+  alter default privileges in schema public grant all on tables to anon, authenticated;
 `;
 
 const ALICE = "00000000-0000-0000-0000-00000000000a";
@@ -27,9 +30,10 @@ async function setup() {
   const db = new PGlite();
   await db.exec(STUBS);
   for (const f of migrations) await db.exec(readFileSync(new URL(f, dir), "utf8"));
+  // Tests below start from a 200 balance; the real starter grant is checked in its own test.
   await db.exec(`insert into auth.users values ('${ALICE}'), ('${BOB}');
-    grant usage on schema public to authenticated;
-    grant select, insert, update on public.generations, public.user_credits to authenticated;`);
+    insert into public.user_credits (user_id, balance) values ('${ALICE}', 200), ('${BOB}', 200);
+`);
   return db;
 }
 
@@ -106,6 +110,43 @@ test("batch holds every output at once, all or nothing; outputs settle independe
   assert.equal((await one<{ n: number }>(db, "select count(*)::int as n from public.generations")).n, 3);
 });
 
+test("new accounts start with 40; more than 3 active runs is refused under the balance lock", async () => {
+  const db = await setup();
+  const CAROL = "00000000-0000-0000-0000-00000000000c";
+  await db.query("insert into auth.users values ($1)", [CAROL]);
+  assert.equal(await balance(db, CAROL), 40);
+
+  const first = await start(db, ALICE, 1);
+  await db.query("select * from public.start_generation($1, '[{},{},{},{}]'::jsonb, 1)", [ALICE]); // a batch counts as one run
+  await start(db, ALICE, 1);
+  await assert.rejects(start(db, ALICE, 1), /too_many_active/);
+  assert.equal(await balance(db, ALICE), 194); // the refused start held nothing
+  await db.query("select * from public.complete_generation($1, 'a/b.png')", [first.id]);
+  await start(db, ALICE, 1);
+});
+
+test("cancel only works on your own run", async () => {
+  const db = await setup();
+  const g = await start(db, ALICE, 30);
+  const byBob = await one<{ id: string | null }>(db, "select id from public.cancel_generation($1, $2)", [g.id, BOB]);
+  assert.equal(byBob.id, null);
+  assert.equal(await balance(db, BOB), 200);
+  assert.equal((await one<{ status: string }>(db, "select status from public.generations where id = $1", [g.id])).status, "queued");
+  const byAlice = await one<{ status: string }>(db, "select * from public.cancel_generation($1, $2)", [g.id, ALICE]);
+  assert.equal(byAlice.status, "failed");
+  assert.equal(await balance(db, ALICE), 200);
+});
+
+test("rate limit: 15 hits per window per key, then refused", async () => {
+  const db = await setup();
+  const hit = async (key: string) => (await one<{ limited: boolean }>(db, "select public.rate_limit_hit($1, 15, interval '10 minutes') as limited", [key])).limited;
+  for (let i = 0; i < 15; i++) assert.equal(await hit("ip:1.2.3.4"), false);
+  assert.equal(await hit("ip:1.2.3.4"), true);
+  assert.equal(await hit("ip:5.6.7.8"), false); // other keys unaffected
+  await db.query("update public.rate_limit_hits set at = now() - interval '11 minutes'");
+  assert.equal(await hit("ip:1.2.3.4"), false); // window slid
+});
+
 test("RLS: users read only their own rows and cannot write or call functions", async () => {
   const db = await setup();
   await start(db, ALICE, 4);
@@ -114,7 +155,10 @@ test("RLS: users read only their own rows and cannot write or call functions", a
   const rows = (await db.query<{ user_id: string }>("select user_id from public.generations")).rows;
   assert.deepEqual(rows.map((r) => r.user_id), [ALICE]);
   assert.equal((await db.query("select * from public.user_credits")).rows.length, 1);
-  await assert.rejects(db.query(`insert into public.generations (user_id, intent, credits_amount) values ('${ALICE}', '{}', 0)`), /row-level security/);
-  assert.equal((await db.query("update public.user_credits set balance = 99999 returning 1")).rows.length, 0);
+  await assert.rejects(db.query(`insert into public.generations (user_id, intent, credits_amount) values ('${ALICE}', '{}', 0)`), /permission denied/);
+  await assert.rejects(db.query("update public.user_credits set balance = 99999"), /permission denied/);
   await assert.rejects(db.query(`select public.fail_generation(gen_random_uuid(), 'capacity')`), /permission denied/);
+  await assert.rejects(db.query(`select public.cancel_generation(gen_random_uuid(), '${ALICE}')`), /permission denied/);
+  await assert.rejects(db.query("delete from public.generations"), /permission denied/);
+  await assert.rejects(db.query("select * from public.rate_limit_hits"), /permission denied/);
 });

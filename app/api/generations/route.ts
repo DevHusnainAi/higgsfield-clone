@@ -2,7 +2,7 @@ import { after } from "next/server";
 import { estimateCost, splitBatch } from "@/lib/generation";
 import { parseIntent } from "@/lib/intent";
 import { runGeneration } from "@/lib/server/run-generation";
-import { admin, toGeneration, userIdFrom, type GenerationRow } from "@/lib/server/supabase";
+import { admin, RATE_RETRY_AFTER_S, rateLimited, toGeneration, userIdFrom, type GenerationRow } from "@/lib/server/supabase";
 
 // The render runs in after(); this caps it (see RENDER_TIMEOUT_MS).
 export const maxDuration = 300;
@@ -10,6 +10,7 @@ export const maxDuration = 300;
 const STALE_AFTER = "10 minutes";
 
 const json = (body: unknown, status = 200) => Response.json(body, { status });
+const tooMany = (error: string) => Response.json({ error }, { status: 429, headers: { "retry-after": String(RATE_RETRY_AFTER_S) } });
 
 async function balanceOf(userId: string): Promise<number> {
   const { data } = await admin!.rpc("get_balance", { p_user: userId });
@@ -44,6 +45,7 @@ export async function POST(req: Request) {
   if (!admin) return json({ error: "Server is not configured" }, 503);
   const userId = await userIdFrom(req);
   if (!userId) return json({ error: "Unauthorized" }, 401);
+  if (await rateLimited(req, userId)) return tooMany("Too many requests. Try again in a few minutes.");
 
   const body: unknown = await req.json().catch(() => null);
   const { prompt, overrides } = (body ?? {}) as { prompt?: unknown; overrides?: unknown };
@@ -58,6 +60,7 @@ export async function POST(req: Request) {
     if (error.message.includes("insufficient_credits")) {
       return json({ error: "insufficient_credits", cost, balance: await balanceOf(userId) }, 402);
     }
+    if (error.message.includes("too_many_active")) return tooMany("You already have 3 runs in progress. Wait for one to finish.");
     console.error("[api] start_generation failed", error.message);
     return json({ error: `Could not start generation: ${error.message}` }, 500);
   }

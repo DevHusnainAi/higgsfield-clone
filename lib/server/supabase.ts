@@ -61,3 +61,22 @@ export function toGeneration(r: GenerationRow): Generation {
   }
 }
 
+const RATE_MAX = 15;
+const RATE_WINDOW = "10 minutes";
+export const RATE_RETRY_AFTER_S = 600;
+
+/**
+ * True when this user or this IP has used up RATE_MAX write requests in RATE_WINDOW. Fails closed.
+ * The IP key caps farming of fresh anonymous accounts from one machine.
+ * ponytail: trusts the first x-forwarded-for hop, which the host (Vercel) sets; behind another proxy, read that proxy's header instead
+ */
+export async function rateLimited(req: Request, userId: string): Promise<boolean> {
+  if (!admin) return true;
+  const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim();
+  for (const key of [`user:${userId}`, ...(ip ? [`ip:${ip}`] : [])]) {
+    const { data, error } = await admin.rpc("rate_limit_hit", { p_key: key, p_max: RATE_MAX, p_window: RATE_WINDOW });
+    if (error) console.error("[api] rate limit check failed (is the migration applied?)", error.message);
+    if (error || data) return true;
+  }
+  return false;
+}
