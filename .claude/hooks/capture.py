@@ -55,10 +55,16 @@ def main():
     os.makedirs(logdir, exist_ok=True)
     ts = now()
 
-    existing = glob.glob(os.path.join(logdir, f"*_{sid}.md"))
-    path = existing[0] if existing else os.path.join(
+    # optional argv[1]: pin every session to one log file in .agent-logs/
+    pinned = os.path.join(logdir, sys.argv[1]) if len(sys.argv) > 1 else None
+    existing = [pinned] if pinned and os.path.exists(pinned) else glob.glob(os.path.join(logdir, f"*_{sid}.md"))
+    path = existing[0] if existing else pinned or os.path.join(
         logdir, datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S") + f"_{sid}.md")
-    body = open(path).read().split("\n---\n", 1)[1] if existing else (
+    raw = open(path).read() if existing else ""
+    sids = re.findall(r"^session_id: (.+)$", raw, re.M)
+    sids = [s.strip() for s in sids[0].split(",")] if sids else []
+    sids += [sid] if sid not in sids else []
+    body = raw.split("\n---\n", 1)[1] if existing else (
         f"\n# Session Log - {ts[:10]}\n\nSession: `{sid[:8]}` | Project: `{PROJECT}` | Author: `{AUTHOR}`\n\n---\n")
 
     nums = [int(n) for n in re.findall(r"\[LOG_ENTRY type=PROMPT num=(\d+)", body)]
@@ -74,7 +80,7 @@ def main():
 
     prompt_times = re.findall(r"type=PROMPT num=\d+ session=\w+\]\ntimestamp: (\S+)", body)
     models = sorted(set(re.findall(r"^model: (\S+)$", body, re.M)))
-    header = (f"---\nsession_id: {sid}\ndate: {(prompt_times or [ts])[0][:10]}\nauthor: {AUTHOR}\n"
+    header = (f"---\nsession_id: {', '.join(sids)}\ndate: {(prompt_times or [ts])[0][:10]}\nauthor: {AUTHOR}\n"
               f"model: {', '.join(models)}\ntool: {TOOL}\nproject: {PROJECT}\ntotal_exchanges: {len(prompt_times)}\n"
               f"first_prompt_time: {(prompt_times or [ts])[0]}\nlast_prompt_time: {(prompt_times or [ts])[-1]}\n---")
     with open(path, "w") as f:

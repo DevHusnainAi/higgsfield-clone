@@ -1,10 +1,10 @@
 {
   "hooks": {
     "UserPromptSubmit": [
-      { "hooks": [{ "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/capture.py\"" }] }
+      { "hooks": [{ "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/capture.py\" 2026-10-06_06-44-46_da3ec894-6c08-48ce-bf3b-561c74d6b5cf.md" }] }
     ],
     "Stop": [
-      { "hooks": [{ "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/capture.py\"" }] }
+      { "hooks": [{ "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/capture.py\" 2026-10-06_06-44-46_da3ec894-6c08-48ce-bf3b-561c74d6b5cf.md" }] }
     ]
   }
 }
