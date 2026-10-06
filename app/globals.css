@@ -1,52 +1,53 @@
 @import "tailwindcss";
 
-/* Graphite neutrals (one cool hue, 260) + one accent: Ember.
-   Elevation = surface steps + fg-tinted hairlines + a lit top edge (no outer glows).
-   Accent carries dark ink text in both themes so buttons pass AA.
-   Shape lock: surfaces/inputs 12px (rounded-xl), actions full pill. */
+/* Dark-only carbon system: one cool hue (260) for every neutral, one accent (Ember).
+   Depth comes from lightness tiers, hairlines and a lit top edge; no glows.
+   Measured WCAG contrast (OKLCH -> sRGB): fg >= 15:1, fg-muted >= 6.7:1, accent-text >= 8.3:1,
+   danger >= 6:1 on every tier; accent-ink on accent 7.8:1.
+   Shape lock: surfaces and inputs 12px (rounded-xl), actions full pill. */
 :root {
-  --bg: oklch(0.985 0.002 260);
-  --surface: oklch(0.97 0.003 260);
-  --surface-raised: oklch(0.995 0.001 260);
-  --surface-glass: oklch(0.995 0.001 260 / 0.72);
-  --line: oklch(0.21 0.01 260 / 0.1);
-  --line-strong: oklch(0.21 0.01 260 / 0.2);
-  --edge: oklch(1 0 0 / 0.8);
-  --shadow-tint: oklch(0.25 0.02 260 / 0.16);
-  --fg: oklch(0.21 0.01 260);
-  --fg-muted: oklch(0.47 0.012 260);
-  --accent: oklch(0.72 0.16 48);
-  --accent-ink: oklch(0.2 0.03 48);
-  --accent-text: oklch(0.52 0.15 42);
-  --danger: oklch(0.55 0.19 25);
-}
+  color-scheme: dark;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: oklch(0.13 0.006 260);
-    --surface: oklch(0.16 0.007 260);
-    --surface-raised: oklch(0.195 0.008 260);
-    --surface-glass: oklch(0.2 0.008 260 / 0.62);
-    --line: oklch(1 0 0 / 0.08);
-    --line-strong: oklch(1 0 0 / 0.15);
-    --edge: oklch(1 0 0 / 0.06);
-    --shadow-tint: oklch(0.06 0.01 260 / 0.6);
-    --fg: oklch(0.95 0.004 260);
-    --fg-muted: oklch(0.71 0.012 260);
-    --accent: oklch(0.74 0.15 50);
-    --accent-ink: oklch(0.18 0.03 48);
-    --accent-text: oklch(0.78 0.13 52);
-    --danger: oklch(0.7 0.17 25);
-  }
+  /* Surface tiers, darkest first. */
+  --stage: oklch(0.09 0.005 260); /* behind media: the viewer */
+  --bg: oklch(0.12 0.006 260); /* page */
+  --surface: oklch(0.155 0.007 260); /* sidebar, cards */
+  --surface-raised: oklch(0.19 0.008 260); /* composer, popovers, inspector */
+  --surface-hover: oklch(0.22 0.008 260); /* hovered and selected rows */
+  --surface-glass: oklch(0.19 0.008 260 / 0.62); /* control layer over scrolling content */
+  --surface-glass-media: oklch(0.15 0.007 260 / 0.85); /* controls over images: contrast can't depend on the photo */
+
+  /* Hairlines. Decorative tiers sit at 1.1-1.5:1. --line-control is for borders that are the only sign
+     a control exists (inputs, selects): 3.45:1 on --bg, 3.57:1 on --surface-raised (WCAG 1.4.11). */
+  --line-subtle: oklch(1 0 0 / 0.05);
+  --line: oklch(1 0 0 / 0.08);
+  --line-strong: oklch(1 0 0 / 0.14);
+  --line-control: oklch(1 0 0 / 0.38);
+  --edge: oklch(1 0 0 / 0.06); /* top-edge highlight */
+  --shadow-tint: oklch(0.06 0.01 260 / 0.6);
+
+  --fg: oklch(0.95 0.004 260);
+  --fg-muted: oklch(0.71 0.012 260);
+  --accent: oklch(0.74 0.15 50);
+  --accent-ink: oklch(0.18 0.03 48);
+  --accent-text: oklch(0.78 0.13 52);
+  --danger: oklch(0.7 0.17 25);
+
+  /* Height of the sticky composer dock; set from layout so focus never lands behind it (WCAG 2.4.11). */
+  --dock-h: 11rem;
 }
 
 @theme inline {
+  --color-stage: var(--stage);
   --color-bg: var(--bg);
   --color-surface: var(--surface);
   --color-surface-raised: var(--surface-raised);
+  --color-surface-hover: var(--surface-hover);
   --color-surface-glass: var(--surface-glass);
+  --color-line-subtle: var(--line-subtle);
   --color-line: var(--line);
   --color-line-strong: var(--line-strong);
+  --color-line-control: var(--line-control);
   --color-fg: var(--fg);
   --color-fg-muted: var(--fg-muted);
   --color-accent: var(--accent);
@@ -59,9 +60,32 @@
   --font-mono: var(--font-geist-mono);
 }
 
-body {
-  background: var(--bg);
-  color: var(--fg);
+/* Type scale additions: 11px (text-2xs) and the 13px UI base (text-ui). Tailwind supplies 12/14/16/24. */
+@theme {
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+  --text-ui: 0.8125rem;
+  --text-ui--line-height: 1.25rem;
+  --tracking-heading: -0.015em;
+  --tracking-display: -0.025em;
+}
+
+@layer base {
+  html {
+    scroll-padding-bottom: var(--dock-h);
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+  }
+
+  /* One focus style everywhere. An outline (not a box-shadow ring) survives Windows High Contrast,
+     and the 2px offset draws it on the page background (8.4:1), so it also reads next to the accent button. */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
 }
 
 /* Control layer only (composer dock): content scrolls underneath, so the blur has something to show. */
@@ -69,10 +93,38 @@ body {
   background: var(--surface-glass);
   backdrop-filter: blur(20px) saturate(150%);
 }
+/* Controls sitting on photos or video (remix, delete, favorite). */
+.glass-media {
+  background: var(--surface-glass-media);
+  backdrop-filter: blur(12px);
+}
 @media (prefers-reduced-transparency: reduce) {
-  .glass {
+  .glass,
+  .glass-media {
     background: var(--surface-raised);
     backdrop-filter: none;
+  }
+}
+
+/* Motion safety.
+   Opt-in: height animation to and from auto only when motion is welcome.
+   Safety net: under reduce, nothing moves. Color, border, opacity and outline still transition, because
+   fades aren't motion (WCAG 2.3.3); transforms, sizes and layout snap instantly; any animation ends at once. */
+@media (prefers-reduced-motion: no-preference) {
+  :root {
+    interpolate-size: allow-keywords;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  ::before,
+  ::after {
+    transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, opacity !important;
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
   }
 }
 
