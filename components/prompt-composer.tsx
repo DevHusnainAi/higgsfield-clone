@@ -1,12 +1,14 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { ArrowUp } from "@phosphor-icons/react";
 import { cheaperAlternatives, costBreakdown, estimateCost } from "@/lib/generation";
 import { parseIntent, type IntentOverrides } from "@/lib/intent";
+import { remoteEnabled, uploadReference } from "@/lib/remote";
 import { startGeneration, useStudio } from "@/lib/store";
 import { AdvancedSettings } from "./advanced-settings";
 import { ParamChips } from "./param-chips";
+import { nearestVideoRatio, ReferenceButton, ReferencePreview } from "./reference-picker";
 
 export function PromptComposer({
   prompt,
@@ -17,7 +19,7 @@ export function PromptComposer({
   prompt: string;
   onPromptChange: (p: string) => void;
   overrides: IntentOverrides;
-  onOverridesChange: (o: IntentOverrides) => void;
+  onOverridesChange: Dispatch<SetStateAction<IntentOverrides>>;
 }) {
   const intent = useMemo(() => parseIntent(prompt, overrides), [prompt, overrides]);
   const cost = estimateCost(intent);
@@ -25,9 +27,42 @@ export function PromptComposer({
   const { balance } = useStudio();
   const short = !empty && balance !== null && cost > balance;
   const alternatives = short ? cheaperAlternatives(intent, balance) : [];
+  const [local, setLocal] = useState<string | null>(null); // object URL of the frame being (or just) uploaded
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  function dropLocal() {
+    if (local) URL.revokeObjectURL(local);
+    setLocal(null);
+  }
+
+  async function attach(file: File) {
+    dropLocal();
+    setUploadError(null);
+    setLocal(URL.createObjectURL(file));
+    setUploading(true);
+    try {
+      const [reference, aspectRatio] = await Promise.all([uploadReference(file), nearestVideoRatio(file)]);
+      onOverridesChange((o) => ({ ...o, reference, aspectRatio }));
+    } catch (err) {
+      dropLocal();
+      setUploadError(err instanceof Error ? err.message : "Upload failed.");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function removeReference() {
+    dropLocal();
+    onOverridesChange((o) => {
+      const next = { ...o };
+      delete next.reference;
+      return next;
+    });
+  }
 
   function submit() {
-    if (!empty && !short) startGeneration(intent);
+    if (!empty && !short && !uploading) startGeneration(intent);
   }
 
   return (
@@ -38,6 +73,14 @@ export function PromptComposer({
       }}
       className="glass flex flex-col gap-2 rounded-xl border border-line p-2 shadow-float inset-shadow-edge transition-colors focus-within:border-line-strong"
     >
+      {(uploading || overrides.reference) && (
+        <ReferencePreview path={overrides.reference ?? null} localUrl={local} uploading={uploading} onRemove={removeReference} />
+      )}
+      {uploadError && (
+        <p role="alert" className="px-3 pt-1 text-xs text-danger">
+          {uploadError}
+        </p>
+      )}
       <label htmlFor="prompt" className="sr-only">
         Describe what you want to make
       </label>
@@ -59,12 +102,13 @@ export function PromptComposer({
       <ParamChips intent={intent} overrides={overrides} onOverridesChange={onOverridesChange} />
       <div className="flex items-center gap-3 pl-1 pr-1">
         <AdvancedSettings intent={intent} overrides={overrides} onOverridesChange={onOverridesChange} />
+        {remoteEnabled && <ReferenceButton onFile={(f) => void attach(f)} disabled={uploading} />}
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg-muted" aria-live="polite">
           {empty ? "Shift + Enter for a new line" : `${costBreakdown(intent)} = ${cost}`}
         </span>
         <button
           type="submit"
-          disabled={empty || short}
+          disabled={empty || short || uploading}
           className="flex h-9 shrink-0 items-center gap-2 rounded-full bg-accent pl-4 pr-3 text-sm font-medium text-accent-ink transition hover:brightness-105 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-40"
         >
           {empty ? "Generate" : short ? `Need ${cost}, have ${balance}` : `Generate · ${cost} credits`}

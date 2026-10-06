@@ -12,6 +12,8 @@ export interface ModelSpec {
   credits: number;
   /** null = the model has no guidance setting (distilled models). */
   guidance: { min: number; max: number; default: number } | null;
+  /** Animates an uploaded start frame; used exactly when a reference image is attached. */
+  startFrame?: true;
 }
 
 export const MODELS = {
@@ -39,16 +41,28 @@ export const MODELS = {
     credits: 6,
     guidance: { min: 1, max: 10, default: 3.5 },
   },
+  // The 5B model is text-to-video only on fal via HF; image-to-video goes to the A14B checkpoint.
+  "wan-2.2-i2v-a14b": {
+    label: "Wan 2.2 A14B (start frame)",
+    media: "video",
+    hfId: "Wan-AI/Wan2.2-I2V-A14B",
+    provider: "fal-ai",
+    credits: 8, // a default 5s clip = the 40-credit starter grant
+    guidance: { min: 1, max: 10, default: 3.5 },
+    startFrame: true,
+  },
 } as const satisfies Record<string, ModelSpec>;
 
 export type ModelId = keyof typeof MODELS;
 
 export const DEFAULT_MODEL: Record<MediaType, ModelId> = { image: "sd3-medium", video: "wan-2.2-5b" };
+export const START_FRAME_MODEL: ModelId = "wan-2.2-i2v-a14b";
 
 export const isModelId = (v: unknown): v is ModelId => typeof v === "string" && Object.hasOwn(MODELS, v);
 
-export function modelsFor(media: MediaType): [ModelId, ModelSpec][] {
-  return (Object.entries(MODELS) as [ModelId, ModelSpec][]).filter(([, m]) => m.media === media);
+/** Models that can render `media`, with or without a start frame attached. */
+export function modelsFor(media: MediaType, startFrame = false): [ModelId, ModelSpec][] {
+  return (Object.entries(MODELS) as [ModelId, ModelSpec][]).filter(([, m]) => m.media === media && Boolean(m.startFrame) === startFrame);
 }
 
 export const MAX_SEED = 2 ** 32 - 1;

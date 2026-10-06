@@ -20,7 +20,7 @@ export function Workspace() {
 
   function changePrompt(p: string) {
     setPrompt(p);
-    if (!p.trim()) setOverrides({}); // a cleared prompt starts fresh
+    if (!p.trim()) setOverrides((o) => (o.reference ? { reference: o.reference } : {})); // a cleared prompt starts fresh, but keeps an uploaded frame
   }
 
   function pick(example: string) {

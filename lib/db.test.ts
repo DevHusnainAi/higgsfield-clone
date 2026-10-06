@@ -17,7 +17,13 @@ const STUBS = `
   grant usage on schema auth to authenticated;
   grant execute on function auth.uid() to authenticated;
   create schema storage;
-  create table storage.buckets (id text primary key, name text, public boolean);
+  create table storage.buckets (id text primary key, name text, public boolean, file_size_limit bigint, allowed_mime_types text[]);
+  create table storage.objects (id uuid primary key default gen_random_uuid(), bucket_id text, name text);
+  alter table storage.objects enable row level security;
+  create function storage.foldername(name text) returns text[] language sql immutable as
+    $$ select (string_to_array(name, '/'))[1:array_length(string_to_array(name, '/'), 1) - 1] $$;
+  grant usage on schema storage to authenticated;
+  grant select, insert, update, delete on storage.objects to authenticated;
   -- Like Supabase: client roles get full table privileges by default, so the migration must revoke them.
   grant usage on schema public to anon, authenticated;
   alter default privileges in schema public grant all on tables to anon, authenticated;
@@ -145,6 +151,20 @@ test("rate limit: 15 hits per window per key, then refused", async () => {
   assert.equal(await hit("ip:5.6.7.8"), false); // other keys unaffected
   await db.query("update public.rate_limit_hits set at = now() - interval '11 minutes'");
   assert.equal(await hit("ip:1.2.3.4"), false); // window slid
+});
+
+test("references bucket: private, and users only touch files in their own folder", async () => {
+  const db = await setup();
+  assert.equal((await one<{ public: boolean }>(db, "select public from storage.buckets where id = 'references'")).public, false);
+  await db.exec(`insert into storage.objects (bucket_id, name) values ('references', '${BOB}/b.png')`); // as owner role
+  await db.exec(`set role authenticated; set request.jwt.claim.sub = '${ALICE}';`);
+  await db.query(`insert into storage.objects (bucket_id, name) values ('references', '${ALICE}/a.png')`);
+  await assert.rejects(db.query(`insert into storage.objects (bucket_id, name) values ('references', '${BOB}/x.png')`), /row-level security/);
+  await assert.rejects(db.query(`insert into storage.objects (bucket_id, name) values ('generations', '${ALICE}/x.png')`), /row-level security/);
+  assert.deepEqual((await db.query<{ name: string }>("select name from storage.objects")).rows.map((r) => r.name), [`${ALICE}/a.png`]);
+  assert.equal((await db.query(`delete from storage.objects where name = '${BOB}/b.png' returning 1`)).rows.length, 0);
+  assert.equal((await db.query("update storage.objects set name = 'x' returning 1")).rows.length, 0);
+  assert.equal((await db.query(`delete from storage.objects where name = '${ALICE}/a.png' returning 1`)).rows.length, 1);
 });
 
 test("RLS: users read only their own rows and cannot write or call functions", async () => {

@@ -1,6 +1,6 @@
 // Browser side of the Supabase backend: an anonymous session + authenticated calls to our API routes.
 // Without NEXT_PUBLIC_SUPABASE_* env vars the store runs fully local (simulated renders).
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createClient, type Session, type SupabaseClient } from "@supabase/supabase-js";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
@@ -33,15 +33,15 @@ const AUTH_HINTS: Record<string, string> = {
 let client: SupabaseClient | null = null;
 
 // ponytail: anonymous sign-in per browser; add email/OAuth linking when accounts need to roam devices
-async function accessToken(): Promise<string> {
+async function session(): Promise<Session> {
   client ??= createClient(url!, key!);
   try {
     const { data, error } = await client.auth.getSession(); // refreshes an expired token
     if (error) throw error;
-    if (data.session) return data.session.access_token;
+    if (data.session) return data.session;
     const anon = await client.auth.signInAnonymously();
     if (anon.error || !anon.data.session) throw anon.error ?? new Error("No session returned");
-    return anon.data.session.access_token;
+    return anon.data.session;
   } catch (err) {
     const e = err as { code?: string; status?: number; message?: string; name?: string };
     if (e.name === "AuthRetryableFetchError" || err instanceof TypeError) {
@@ -58,7 +58,7 @@ const STATUS_ERRORS: Record<number, [SyncError["kind"], string]> = {
 
 /** Authenticated JSON call. Throws SyncError for transport/auth/config failures; returns other statuses (e.g. 402) to the caller. */
 export async function api<T>(path: string, init?: RequestInit): Promise<{ ok: boolean; status: number; data: T }> {
-  const token = await accessToken();
+  const token = (await session()).access_token;
   let res: Response;
   try {
     res = await fetch(path, { ...init, headers: { "content-type": "application/json", authorization: `Bearer ${token}` } });
@@ -70,4 +70,26 @@ export async function api<T>(path: string, init?: RequestInit): Promise<{ ok: bo
   if (known) throw new SyncError(known[0], known[1], { status: res.status, body: data });
   if (res.status >= 500) throw new SyncError("server", `Server error (${res.status}): ${data.error ?? "no details"}.`, { status: res.status, body: data });
   return { ok: res.ok, status: res.status, data };
+}
+
+export const REFERENCE_TYPES: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
+export const MAX_REFERENCE_BYTES = 5 * 1024 * 1024; // matches the bucket's file_size_limit
+
+/** Uploads a start frame straight to the private references bucket, into this user's folder. Returns its path. */
+export async function uploadReference(file: File): Promise<string> {
+  const ext = REFERENCE_TYPES[file.type];
+  if (!ext) throw new Error("Use a PNG, JPEG or WebP image.");
+  if (file.size > MAX_REFERENCE_BYTES) throw new Error("Images can be up to 5 MB.");
+  const path = `${(await session()).user.id}/${crypto.randomUUID()}.${ext}`;
+  const { error } = await client!.storage.from("references").upload(path, file, { contentType: file.type, upsert: false });
+  if (error) throw new Error(`Upload failed: ${error.message}`);
+  return path;
+}
+
+/** Short-lived link for showing your own start frame (the bucket is private). */
+export async function referencePreviewUrl(path: string): Promise<string> {
+  await session();
+  const { data, error } = await client!.storage.from("references").createSignedUrl(path, 3600);
+  if (error) throw error;
+  return data.signedUrl;
 }

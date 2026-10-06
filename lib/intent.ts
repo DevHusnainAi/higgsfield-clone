@@ -1,7 +1,7 @@
 // Rule-based prompt -> generation settings, plus manual overrides. Pure, never throws.
 // The server runs the same function on untrusted overrides, so every value is re-validated here.
 // ponytail: regex rules, not NLP; swap the detection half for an LLM call if rules stop scaling
-import { DEFAULT_MODEL, isModelId, MAX_SEED, MODELS, type ModelId } from "./models.ts";
+import { DEFAULT_MODEL, isModelId, MAX_SEED, MODELS, START_FRAME_MODEL, type ModelId } from "./models.ts";
 
 export type MediaType = "image" | "video";
 
@@ -17,7 +17,7 @@ export type AspectRatio = (typeof ASPECT_RATIOS)[number];
 export type IntentField = "media" | "camera" | "aspectRatio" | "durationSec";
 
 export interface IntentWarning {
-  field: IntentField | "prompt" | "model" | "guidanceScale";
+  field: IntentField | "prompt" | "model" | "guidanceScale" | "reference";
   message: string;
 }
 
@@ -31,8 +31,9 @@ export interface IntentOverrides {
   seed?: number | null;
   guidanceScale?: number | null;
   count?: number;
+  reference?: string | null;
 }
-export const OVERRIDE_KEYS = ["media", "camera", "aspectRatio", "durationSec", "model", "seed", "guidanceScale", "count"] as const;
+export const OVERRIDE_KEYS = ["media", "camera", "aspectRatio", "durationSec", "model", "seed", "guidanceScale", "count", "reference"] as const;
 
 export interface Intent {
   /** Trimmed prompt, capped at MAX_PROMPT_LENGTH. */
@@ -49,6 +50,8 @@ export interface Intent {
   guidanceScale: number | null;
   /** Outputs in one run (COUNT.min-COUNT.max). Each output is its own generation. */
   count: number;
+  /** Start frame: a path in the private references bucket ("<user id>/<uuid>.<ext>"). Makes the run image-to-video. */
+  reference: string | null;
   /** Prompt text each field was read from. Missing key = not from the prompt. */
   matched: Partial<Record<IntentField, string>>;
   /** Adjustments the user should see instead of having them happen silently. */
@@ -60,6 +63,10 @@ export const MAX_PROMPT_LENGTH = 4000;
 export const DURATION = { min: 2, max: 6, default: 5 } as const;
 export const VIDEO_RATIOS: readonly AspectRatio[] = ["16:9", "9:16", "1:1"];
 export const COUNT = { min: 1, max: 4 } as const;
+
+const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+/** The only shape a reference may take: a file in a user's own folder. No URLs, no "..", nothing else. */
+export const REFERENCE_PATH = new RegExp(`^${UUID}/${UUID}\\.(?:png|jpg|webp)$`);
 
 type Rule<T> = readonly [RegExp, T];
 
@@ -169,6 +176,7 @@ export function sanitizeOverrides(input: unknown): IntentOverrides {
   if (o.seed === null || (Number.isInteger(o.seed) && (o.seed as number) >= 0 && (o.seed as number) <= MAX_SEED)) out.seed = o.seed as number | null;
   if (o.guidanceScale === null || (typeof o.guidanceScale === "number" && Number.isFinite(o.guidanceScale))) out.guidanceScale = o.guidanceScale;
   if (Number.isInteger(o.count)) out.count = o.count as number;
+  if (o.reference === null || (typeof o.reference === "string" && REFERENCE_PATH.test(o.reference))) out.reference = o.reference;
   return out;
 }
 
@@ -202,6 +210,11 @@ export function parseIntent(input: unknown, overridesInput?: unknown): Intent {
     matched.media = camera.text;
   }
   if (o.media) media = o.media;
+  const reference = o.reference ?? null;
+  if (reference && media !== "video") {
+    if (o.media === "image") warn("reference", "A start frame animates into a video, so the format is Video.");
+    media = "video";
+  }
 
   let cameraMove: CameraMove | null = null;
   if (media === "video") {
@@ -232,9 +245,14 @@ export function parseIntent(input: unknown, overridesInput?: unknown): Intent {
     aspectRatio = fitted;
   }
 
-  let model = DEFAULT_MODEL[media];
-  if (o.model && MODELS[o.model].media === media) model = o.model;
-  else if (o.model) warn("model", `${MODELS[o.model].label} makes ${MODELS[o.model].media}s, so ${MODELS[model].label} is used.`);
+  let model = reference ? START_FRAME_MODEL : DEFAULT_MODEL[media];
+  if (o.model && o.model !== model) {
+    const m = MODELS[o.model];
+    if (m.media !== media) warn("model", `${m.label} makes ${m.media}s, so ${MODELS[model].label} is used.`);
+    else if (Boolean("startFrame" in m) !== Boolean(reference)) {
+      warn("model", reference ? `${m.label} can't start from an image, so ${MODELS[model].label} is used.` : `${m.label} needs a start frame, so ${MODELS[model].label} is used.`);
+    } else model = o.model;
+  }
 
   let guidanceScale: number | null = null;
   const range = MODELS[model].guidance;
@@ -255,6 +273,7 @@ export function parseIntent(input: unknown, overridesInput?: unknown): Intent {
     seed: o.seed ?? null,
     guidanceScale,
     count: clamp(o.count ?? COUNT.min, COUNT.min, COUNT.max),
+    reference,
     matched,
     warnings,
   };

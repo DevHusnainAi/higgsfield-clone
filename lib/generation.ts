@@ -87,7 +87,7 @@ export function cheaperAlternatives(intent: Intent, balance: number): CheaperOpt
   if (cheaperImage) {
     const [id, m] = cheaperImage;
     const label = intent.media === "video" ? `Still ${n > 1 ? "images" : "image"} with ${m.label}` : `Use ${m.label}`;
-    options.push({ label, overrides: { media: "image", model: id }, cost: m.credits * n });
+    options.push({ label, overrides: { media: "image", model: id, reference: null }, cost: m.credits * n });
   }
   return options;
 }

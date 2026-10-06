@@ -143,3 +143,19 @@ test("batch: cost scales with count, splits into seeded single outputs, degrades
   assert.deepEqual([fewer.label, fewer.cost], ["Generate 2 images instead", 8]);
   for (const opt of cheaperAlternatives(four, 10)) assert.ok(estimateCost(parseIntent("a photo", { ...four, ...opt.overrides, seed: 10 })) <= 10);
 });
+
+test("reference: only a user-folder path is accepted, and it forces image-to-video", () => {
+  const ref = "00000000-0000-0000-0000-00000000000a/11111111-1111-1111-1111-111111111111.png";
+  for (const bad of ["https://evil.test/x.png", "../x.png", `${ref}/../y.png`, "a/b.png", `${ref}?x`, `/${ref}`, "file:///etc/passwd"]) {
+    assert.equal(sanitizeOverrides({ reference: bad }).reference, undefined, bad);
+  }
+  const it = parseIntent("a photo of a lighthouse", { reference: ref, media: "image", model: "sd3-medium" });
+  assert.deepEqual([it.media, it.model, it.reference], ["video", "wan-2.2-i2v-a14b", ref]);
+  assert.ok(it.warnings.some((w) => w.field === "reference"));
+  // The start-frame model is refused without a frame; remix keeps the frame.
+  assert.equal(parseIntent("a clip", { model: "wan-2.2-i2v-a14b" }).model, "wan-2.2-5b");
+  assert.equal(remixOverrides(it).reference, ref);
+  // Falling back to a still image drops the frame.
+  const still = cheaperAlternatives(parseIntent("a clip", { reference: ref }), 5).find((o) => o.overrides.media === "image")!;
+  assert.equal(parseIntent("a clip", { reference: ref, ...still.overrides }).media, "image");
+});

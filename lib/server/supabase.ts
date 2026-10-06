@@ -8,6 +8,7 @@ const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const secret = process.env.SUPABASE_SECRET_KEY;
 
 export const BUCKET = "generations";
+export const REFERENCES = "references";
 
 export const admin = url && secret ? createClient(url, secret, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
 

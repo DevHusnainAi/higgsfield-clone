@@ -2,7 +2,7 @@ import { after } from "next/server";
 import { estimateCost, splitBatch } from "@/lib/generation";
 import { parseIntent } from "@/lib/intent";
 import { runGeneration } from "@/lib/server/run-generation";
-import { admin, RATE_RETRY_AFTER_S, rateLimited, toGeneration, userIdFrom, type GenerationRow } from "@/lib/server/supabase";
+import { admin, RATE_RETRY_AFTER_S, REFERENCES, rateLimited, toGeneration, userIdFrom, type GenerationRow } from "@/lib/server/supabase";
 
 // The render runs in after(); this caps it (see RENDER_TIMEOUT_MS).
 export const maxDuration = 300;
@@ -51,6 +51,11 @@ export async function POST(req: Request) {
   const { prompt, overrides } = (body ?? {}) as { prompt?: unknown; overrides?: unknown };
   const intent = parseIntent(prompt, overrides);
   if (!intent.prompt) return json({ error: "Prompt is empty" }, 400);
+  // parseIntent already limited reference to "<uuid>/<uuid>.<ext>"; it must be in this user's folder and exist.
+  if (intent.reference) {
+    const exists = intent.reference.startsWith(`${userId}/`) && (await admin.storage.from(REFERENCES).exists(intent.reference)).data;
+    if (!exists) return json({ error: "Start frame not found. Upload it again." }, 400);
+  }
   const items = splitBatch(intent);
   const cost = estimateCost(intent);
 

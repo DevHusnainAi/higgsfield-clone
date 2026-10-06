@@ -4,9 +4,10 @@ import { InferenceClient } from "@huggingface/inference";
 import type { FailureReason } from "../generation.ts";
 import type { AspectRatio, Intent } from "../intent.ts";
 import { DEFAULT_MODEL, MODELS } from "../models.ts";
-import { admin, BUCKET } from "./supabase.ts";
+import { admin, BUCKET, REFERENCES } from "./supabase.ts";
 
 const FPS = 24;
+const START_FRAME_FPS = 16; // fal bills Wan A14B by video second at 16fps
 /** Must stay under the route's maxDuration so we always get to settle the row. */
 export const RENDER_TIMEOUT_MS = 270_000;
 
@@ -54,6 +55,28 @@ async function render(intent: Intent, signal: AbortSignal): Promise<Blob> {
         },
         { signal },
       );
+    case "wan-2.2-i2v-a14b": {
+      // The frame is read from our private bucket with the service role and sent as bytes:
+      // the provider is never handed a URL, and no user-supplied URL is ever fetched.
+      const { data: frame, error } = await admin!.storage.from(REFERENCES).download(intent.reference!);
+      if (error) throw error;
+      // fal-ai receives parameters as-is (schema: fal.ai/models/fal-ai/wan/v2.2-a14b/image-to-video/api).
+      return hf.imageToVideo(
+        {
+          ...base,
+          inputs: frame,
+          parameters: {
+            prompt: intent.prompt,
+            num_frames: (intent.durationSec ?? 5) * START_FRAME_FPS + 1,
+            frames_per_second: START_FRAME_FPS,
+            aspect_ratio: intent.aspectRatio,
+            resolution: "720p",
+            ...common,
+          },
+        },
+        { signal },
+      );
+    }
   }
 }
 

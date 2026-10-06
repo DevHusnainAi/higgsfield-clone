@@ -100,7 +100,7 @@ export function AdvancedSettings({
               }}
               className={inputClass}
             >
-              {modelsFor(intent.media).map(([id, m]) => (
+              {modelsFor(intent.media, Boolean(intent.reference)).map(([id, m]) => (
                 <option key={id} value={id}>
                   {m.label} · {m.credits} credits{intent.media === "video" ? "/s" : ""}
                 </option>
