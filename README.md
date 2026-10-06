@@ -61,7 +61,7 @@ Intent Studio is built around the opposite promises:
 | **Batches** | 1 to 4 outputs per run, held in one transaction, refunded per output. |
 | **Image-to-video** | Attach a start frame from your private library (10 frames, 5 MB each). |
 | **Studio workspace** | Masonry feed of presets, stage + inspector for each run, library with filters and favorites, remix, keyboard shortcuts (`/`, `⌘/Ctrl ↵`). |
-| **Accounts** | Try instantly as a guest (8 credits). Sign in with Google, a magic link, or the 6-digit code from the same email to keep your history everywhere and get 40 credits. Sign-in opens as a modal over the studio, or as a full split page on a direct visit, with Iris, a creature that follows your cursor and covers its eyes while you type the code. |
+| **Accounts** | Try instantly as a guest (8 credits). Sign in with Google or a magic link to keep your history everywhere and get 40 credits. While you wait for the email, the screen completes by itself the moment the link is opened in another tab. Sign-in opens as a modal over the studio, or as a full split page on a direct visit, with Iris, a creature that follows your cursor and watches for your sign-in. |
 | **Dev console** | A live, read-only stream of the pipeline: parsed intent, request latency, credit lock timing, state changes. |
 
 <img src="docs/run.jpg" alt="A finished run on the dark stage with the run inspector beside it: prompt, model, format, aspect ratio, seed, guidance, credits charged, start time and duration." width="100%">
@@ -232,6 +232,7 @@ Node.js **22.18+** is required (the tests run TypeScript directly with Node's ty
 | `HF_TOKEN` | for real renders | **server only** | Hugging Face → Access Tokens (fine-grained, *Make calls to Inference Providers*) | Enough for every model |
 | `FAL_KEY` | optional | **server only** | fal.ai dashboard | FLUX and Wan then bill to fal instead of HF |
 | `DEMO_FALLBACK` | optional | **server only** | | `off` = a provider 402 fails and refunds |
+| `NEXT_PUBLIC_EMAIL_CODES` | optional | browser | | `on` = offer 6-digit code entry; only after adding `{{ .Token }}` to the email templates |
 
 **Supabase dashboard checklist** (hosted projects):
 
@@ -239,7 +240,7 @@ Node.js **22.18+** is required (the tests run TypeScript directly with Node's ty
 - [ ] Authentication → Sign In / Providers: **Anonymous sign-ins** on, **Google** on (client id and secret from a Google Cloud OAuth client with redirect URI `https://<ref>.supabase.co/auth/v1/callback`)
 - [ ] Auth settings: **Allow manual linking** on (guests upgrade by linking Google to the same user)
 - [ ] Authentication → URL Configuration: Site URL and redirect URLs for production and `http://localhost:3000`
-- [ ] Authentication → Emails → Templates: add `{{ .Token }}` to **Magic Link** and **Change Email Address**, so each email carries the 6-digit code as well as the link (for signing in on a different device than the one reading the email)
+- [ ] Optional, for signing in on a different device than the one reading the email: add `{{ .Token }}` to the **Magic Link** and **Change Email Address** templates, then set `NEXT_PUBLIC_EMAIL_CODES=on` to offer "Enter a code instead". Link-only sign-in works with Supabase's default templates.
 - [ ] Authentication → Emails: **custom SMTP** (Resend, Postmark…). The built-in sender is rate-limited and meant for testing, so magic links fail at launch volume without it
 - [ ] Authentication → Attack Protection: CAPTCHA (Turnstile) and a lower anonymous sign-in rate limit
 
@@ -259,6 +260,7 @@ npm run build
 | `lib/store.test.ts` | Cached history is kept only for the account that owns it. |
 | `lib/gaze.test.ts` | Gaze stays inside the eye; smoothing is identical at 60Hz and 120Hz; the paw spring overshoots ~4% and settles in under 0.4s. |
 | `lib/supabase-key.test.ts` | Only a service-role key is accepted as the server key. |
+| `e2e/auth.test.ts` | Sign-in with Supabase mocked at the network layer: axe on the page and the modal in both states, link-only by default, Google's branding values, the waiting state completing when another tab opens the link, Iris watching the radar, and reduced motion. Needs a server built with `NEXT_PUBLIC_SUPABASE_URL=https://fake.supabase.test NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_test`, then `npm run test:auth`. |
 | `e2e/a11y.test.ts` | axe-core, WCAG 2.2 AA, in Chromium. Runs against a local-mode server so it can't write to a live project: |
 
 ```bash
