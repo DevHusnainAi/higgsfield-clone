@@ -5,20 +5,28 @@ import { simulateGeneration, transition, type Generation } from "./generation.ts
 import type { Intent } from "./intent.ts";
 
 const KEY = "studio.history.v1";
+const FAVORITES_KEY = "studio.favorites.v1";
 const MAX_RUNS = 100;
 const STATUSES = new Set(["queued", "generating", "done", "failed"]);
 
+export type LibraryFilter = "all" | "images" | "videos" | "favorites";
+export type View = "create" | LibraryFilter;
+
 export interface StudioState {
   runs: Generation[];
+  favorites: string[];
   selectedId: string | null;
+  view: View;
+  /** Runs created at or after this belong to "this session". */
+  sessionStart: number;
 }
 
-const EMPTY: StudioState = { runs: [], selectedId: null };
+const EMPTY: StudioState = { runs: [], favorites: [], selectedId: null, view: "create", sessionStart: 0 };
 let state: StudioState | null = null;
 const listeners = new Set<() => void>();
 const controllers = new Map<string, AbortController>();
 
-function load(): Generation[] {
+function loadRuns(): Generation[] {
   try {
     const parsed: unknown = JSON.parse(localStorage.getItem(KEY) ?? "[]");
     if (!Array.isArray(parsed)) return [];
@@ -31,17 +39,26 @@ function load(): Generation[] {
   }
 }
 
+function loadFavorites(): string[] {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(FAVORITES_KEY) ?? "[]");
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 function getState(): StudioState {
   if (!state) {
-    state = { runs: load(), selectedId: null };
-    persist(); // record settled interruptions
+    state = { runs: loadRuns(), favorites: loadFavorites(), selectedId: null, view: "create", sessionStart: Date.now() };
+    persist(KEY, state.runs); // record settled interruptions
   }
   return state;
 }
 
-function persist() {
+function persist(key: string, value: unknown) {
   try {
-    localStorage.setItem(KEY, JSON.stringify(state!.runs));
+    localStorage.setItem(key, JSON.stringify(value));
   } catch {
     // Storage full or blocked: the session keeps working in memory.
   }
@@ -49,15 +66,17 @@ function persist() {
 
 function set(next: Partial<StudioState>) {
   state = { ...getState(), ...next };
-  if (next.runs) persist();
+  if (next.runs) persist(KEY, state.runs);
+  if (next.favorites) persist(FAVORITES_KEY, state.favorites);
   listeners.forEach((l) => l());
 }
 
 function subscribe(listener: () => void) {
   listeners.add(listener);
   const onStorage = (e: StorageEvent) => {
-    if (e.key !== KEY) return;
-    state = { ...getState(), runs: load() }; // another tab wrote
+    if (e.key === KEY) state = { ...getState(), runs: loadRuns() }; // another tab wrote
+    else if (e.key === FAVORITES_KEY) state = { ...getState(), favorites: loadFavorites() };
+    else return;
     listener();
   };
   window.addEventListener("storage", onStorage);
@@ -77,8 +96,25 @@ function upsert(gen: Generation) {
   set({ runs: i === -1 ? [gen, ...runs].slice(0, MAX_RUNS) : runs.with(i, gen) });
 }
 
+/** Open a run in the create view (null = blank composer). */
 export function select(id: string | null) {
-  set({ selectedId: id });
+  set({ selectedId: id, view: "create" });
+}
+
+export function setView(view: View) {
+  set({ view });
+}
+
+export function toggleFavorite(id: string) {
+  const { favorites } = getState();
+  set({ favorites: favorites.includes(id) ? favorites.filter((f) => f !== id) : [id, ...favorites] });
+}
+
+export function matchesFilter(gen: Generation, filter: LibraryFilter, favorites: string[]): boolean {
+  if (filter === "images") return gen.intent.media === "image";
+  if (filter === "videos") return gen.intent.media === "video";
+  if (filter === "favorites") return favorites.includes(gen.id);
+  return true;
 }
 
 export function startGeneration(intent: Intent) {
@@ -90,7 +126,7 @@ export function startGeneration(intent: Intent) {
       if (first) {
         first = false;
         controllers.set(gen.id, ctrl);
-        set({ selectedId: gen.id });
+        set({ selectedId: gen.id, view: "create" });
       }
       upsert(gen);
       if (gen.status === "done" || gen.status === "failed") controllers.delete(gen.id);

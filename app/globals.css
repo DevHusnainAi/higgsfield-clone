@@ -1,13 +1,18 @@
 @import "tailwindcss";
 
 /* Graphite neutrals (one cool hue, 260) + one accent: Ember.
+   Elevation = surface steps + fg-tinted hairlines + a lit top edge (no outer glows).
    Accent carries dark ink text in both themes so buttons pass AA.
    Shape lock: surfaces/inputs 12px (rounded-xl), actions full pill. */
 :root {
   --bg: oklch(0.985 0.002 260);
-  --surface: oklch(0.965 0.003 260);
+  --surface: oklch(0.97 0.003 260);
   --surface-raised: oklch(0.995 0.001 260);
-  --line: oklch(0.9 0.005 260);
+  --surface-glass: oklch(0.995 0.001 260 / 0.72);
+  --line: oklch(0.21 0.01 260 / 0.1);
+  --line-strong: oklch(0.21 0.01 260 / 0.2);
+  --edge: oklch(1 0 0 / 0.8);
+  --shadow-tint: oklch(0.25 0.02 260 / 0.16);
   --fg: oklch(0.21 0.01 260);
   --fg-muted: oklch(0.47 0.012 260);
   --accent: oklch(0.72 0.16 48);
@@ -18,10 +23,14 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: oklch(0.155 0.006 260);
-    --surface: oklch(0.19 0.007 260);
-    --surface-raised: oklch(0.225 0.008 260);
-    --line: oklch(0.29 0.009 260);
+    --bg: oklch(0.13 0.006 260);
+    --surface: oklch(0.16 0.007 260);
+    --surface-raised: oklch(0.195 0.008 260);
+    --surface-glass: oklch(0.2 0.008 260 / 0.62);
+    --line: oklch(1 0 0 / 0.08);
+    --line-strong: oklch(1 0 0 / 0.15);
+    --edge: oklch(1 0 0 / 0.06);
+    --shadow-tint: oklch(0.06 0.01 260 / 0.6);
     --fg: oklch(0.95 0.004 260);
     --fg-muted: oklch(0.71 0.012 260);
     --accent: oklch(0.74 0.15 50);
@@ -35,13 +44,17 @@
   --color-bg: var(--bg);
   --color-surface: var(--surface);
   --color-surface-raised: var(--surface-raised);
+  --color-surface-glass: var(--surface-glass);
   --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
   --color-fg: var(--fg);
   --color-fg-muted: var(--fg-muted);
   --color-accent: var(--accent);
   --color-accent-ink: var(--accent-ink);
   --color-accent-text: var(--accent-text);
   --color-danger: var(--danger);
+  --inset-shadow-edge: inset 0 1px 0 0 var(--edge);
+  --shadow-float: 0 16px 48px -16px var(--shadow-tint), 0 2px 6px -2px var(--shadow-tint);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
@@ -49,6 +62,18 @@
 body {
   background: var(--bg);
   color: var(--fg);
+}
+
+/* Control layer only (composer dock): content scrolls underneath, so the blur has something to show. */
+.glass {
+  background: var(--surface-glass);
+  backdrop-filter: blur(20px) saturate(150%);
+}
+@media (prefers-reduced-transparency: reduce) {
+  .glass {
+    background: var(--surface-raised);
+    backdrop-filter: none;
+  }
 }
 
 /* Skeleton sweep while a generation runs; static under reduced motion. */

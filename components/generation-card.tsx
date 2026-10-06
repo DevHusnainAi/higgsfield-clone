@@ -3,9 +3,11 @@
 import Image from "next/image";
 import { ArrowClockwise, X } from "@phosphor-icons/react";
 import { statusMessage, type Generation } from "@/lib/generation";
-import { cancelGeneration, startGeneration } from "@/lib/store";
+import { cancelGeneration, startGeneration, useStudio } from "@/lib/store";
+import { FavoriteButton } from "./favorite-button";
 
 export function GenerationCard({ gen }: { gen: Generation }) {
+  const { favorites } = useStudio();
   const running = gen.status === "queued" || gen.status === "generating";
   const [w, h] = gen.intent.aspectRatio.split(":").map(Number);
 
@@ -14,8 +16,8 @@ export function GenerationCard({ gen }: { gen: Generation }) {
       {/* Reserves the final shape so nothing jumps when the result lands. */}
       {gen.status !== "failed" && (
         <div
-          style={{ aspectRatio: `${w} / ${h}`, maxWidth: `calc(55dvh * ${w} / ${h})` }}
-          className="relative mx-auto w-full overflow-hidden rounded-xl border border-line bg-surface"
+          style={{ aspectRatio: `${w} / ${h}`, maxWidth: `calc(50dvh * ${w} / ${h})` }}
+          className="relative mx-auto w-full overflow-hidden rounded-xl border border-line bg-surface shadow-float inset-shadow-edge"
         >
           {gen.status === "done" ? (
             <Image src={gen.resultUrl} alt={gen.intent.prompt} fill sizes="(min-width: 768px) 672px, 100vw" className="object-cover" />
@@ -43,6 +45,7 @@ export function GenerationCard({ gen }: { gen: Generation }) {
             <X size={12} weight="bold" /> Cancel
           </button>
         )}
+        {gen.status === "done" && <FavoriteButton id={gen.id} active={favorites.includes(gen.id)} className="shrink-0" />}
         {gen.status === "failed" && (
           <button
             onClick={() => startGeneration(gen.intent)}
