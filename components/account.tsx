@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useId, useRef, useState, type FormEvent } from "react";
 import { CaretUpDown, EnvelopeSimple, SignOut, X } from "@phosphor-icons/react";
 import { remoteEnabled, sendMagicLink, signInWithGoogle, signOut } from "@/lib/remote";
@@ -103,7 +104,11 @@ function SignInDialog({ dialog }: { dialog: React.RefObject<HTMLDialogElement | 
           </>
         )}
         {error && <p role="alert" className="text-ui text-danger [overflow-wrap:anywhere]">{error}</p>}
-        <p className="text-xs text-fg-muted">No password needed. Runs you made before signing in come with you.</p>
+        <p className="text-xs text-fg-muted">
+          No password needed. Runs you made before signing in come with you. By continuing you agree to the{" "}
+          <Link href="/terms" className="text-fg underline underline-offset-2">Terms</Link> and{" "}
+          <Link href="/privacy" className="text-fg underline underline-offset-2">Privacy Policy</Link>.
+        </p>
       </div>
     </dialog>
   );

@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useRef, type ComponentType, type ReactNode } from "react";
 import { CheckCircle, CircleNotch, FilmStrip, Heart, ImageSquare, List, Plus, Sparkle, SquaresFour, Terminal, WarningCircle, X, type IconProps } from "@phosphor-icons/react";
 import { AccountRow } from "@/components/account";
@@ -241,6 +242,11 @@ function SidebarBody({ onNavigate, onClose }: { onNavigate?: () => void; onClose
         </dl>
       </div>
       <AccountRow />
+      {/* Google's OAuth review requires the home page to link the privacy policy. */}
+      <p className="flex shrink-0 gap-4 px-6 pb-3 text-2xs text-fg-muted">
+        <Link href="/privacy" className="hover:text-fg">Privacy</Link>
+        <Link href="/terms" className="hover:text-fg">Terms</Link>
+      </p>
     </div>
   );
 }
