@@ -25,7 +25,7 @@ const STUBS = `
   grant usage on schema storage to authenticated;
   grant select, insert, update, delete on storage.objects to authenticated;
   -- Like Supabase: client roles get full table privileges by default, so the migration must revoke them.
-  grant usage on schema public to anon, authenticated;
+  grant usage on schema public to anon, authenticated, service_role;
   alter default privileges in schema public grant all on tables to anon, authenticated;
 `;
 
@@ -281,6 +281,14 @@ test("merge: moves only settled history from an anonymous user to a permanent on
   assert.equal(await balance(db, ALICE), aliceBefore, "still no credits moved");
   await assert.rejects(db.query("select public.merge_anonymous_history($1, $2)", [BOB, ALICE]), /source_not_anonymous/);
   await assert.rejects(db.query("select public.merge_anonymous_history($1, $2)", [ANON, ANON2]), /target_not_permanent/);
+});
+
+test("merge runs as service_role, which (like hosted Supabase) cannot read auth.users", async () => {
+  const db = await setup();
+  const ANON = "00000000-0000-0000-0000-0000000000b1";
+  await db.query("insert into auth.users values ($1, true)", [ANON]);
+  await db.exec("set role service_role");
+  assert.equal((await one<{ n: number }>(db, "select public.merge_anonymous_history($1, $2) as n", [ANON, ALICE])).n, 0);
 });
 
 test("accounts: browser roles cannot settle grants or merge", async () => {
