@@ -183,9 +183,10 @@ html:has(dialog[open]:modal) {
   }
 }
 
-/* Iris's stage: a faint dot grid fading out toward the edges, plus a soft lift behind Iris. The grid is also
-   what the glass status badge blurs: backdrop-filter shows nothing over a flat fill. Fixed to the panel and
-   pointer-events-none, never on a scrolling container. */
+/* Iris's stage: a dot grid fading out in a circle around Iris, plus a faint warm pool of light. Circles sized to
+   the panel's short side (not the default ellipse), so the falloff stays round on the tall desktop half and
+   fits the short band on phones. The grid is also what the glass status badge blurs: backdrop-filter shows
+   nothing over a flat fill. Fixed to the panel, pointer-events-none. */
 .auth-stage::before,
 .auth-stage::after {
   content: "";
@@ -194,10 +195,33 @@ html:has(dialog[open]:modal) {
   pointer-events: none;
 }
 .auth-stage::before {
-  background-image: radial-gradient(oklch(1 0 0 / 0.05) 1px, transparent 1px);
-  background-size: 16px 16px;
-  mask-image: radial-gradient(closest-side, black 35%, transparent);
+  background-image: radial-gradient(oklch(1 0 0 / 0.07) 1px, transparent 1px);
+  background-size: 20px 20px;
+  background-position: center;
+  mask-image: radial-gradient(circle closest-side, black 20%, transparent);
 }
 .auth-stage::after {
-  background: radial-gradient(closest-side, oklch(1 0 0 / 0.03), transparent);
+  background: radial-gradient(circle closest-side, oklch(0.74 0.15 50 / 0.03), oklch(1 0 0 / 0.015) 45%, transparent);
+}
+
+/* Iris idles: a slow 3px float on the body group (compositor-only, no frame loop) while the ground shadow
+   stays put and tightens in step. The JS loop owns the inner groups' transform attributes; these CSS transforms
+   sit on separate wrapper groups so the two never fight. Paused while Iris covers its eyes or hops
+   (data-still on the svg); off under reduced motion. */
+@keyframes iris-float {
+  50% { transform: translateY(-3px); }
+}
+@keyframes iris-float-shadow {
+  50% { transform: scaleX(0.9); opacity: 0.75; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .iris-float { animation: iris-float 6s ease-in-out infinite; }
+  .iris-shadow { animation: iris-float-shadow 6s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+  [data-still] .iris-float,
+  [data-still] .iris-shadow { animation-play-state: paused; }
+  /* The forehead spark pulses while something is in flight (Google opening, sending, waiting). */
+  .iris-spark-live { animation: iris-spark 1.6s ease-in-out infinite; }
+}
+@keyframes iris-spark {
+  50% { opacity: 0.45; }
 }

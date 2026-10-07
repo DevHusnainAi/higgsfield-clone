@@ -68,7 +68,7 @@ async function openLinkInAnotherTab(ctx: BrowserContext) {
 }
 
 async function sendLink(page: Page) {
-  await page.getByLabel("Work email").fill("maya@agency.com");
+  await page.getByLabel("Email", { exact: true }).fill("maya@agency.com");
   await page.getByRole("button", { name: "Email me a sign-in link" }).click();
   await page.getByRole("heading", { name: "Check your inbox" }).waitFor();
 }
@@ -86,7 +86,7 @@ test("page: start state is accessible, link-only by default, Google button uses 
     return [s.backgroundColor, s.borderTopColor, s.color];
   });
   assert.deepEqual(google, ["rgb(19, 19, 20)", "rgb(142, 145, 143)", "rgb(227, 227, 227)"]);
-  assert.match(await page.locator(".glass-media").innerText(), /Iris is standing guard/);
+  assert.equal(await page.locator(".glass-media").count(), 0, "no status pill while idle: nothing to report");
   await ctx.close();
 });
 
@@ -98,7 +98,7 @@ test("page: waiting state, then the link opened in another tab completes this on
 
   assert.equal(await page.evaluate(() => document.activeElement?.textContent), "Check your inbox", "focus moves to the new heading");
   assert.match(await page.getByRole("status").innerText(), /Waiting for you to open the link/);
-  assert.match(await page.locator(".glass-media").innerText(), /Waiting for email confirmation/);
+  assert.match(await page.locator(".glass-media").innerText(), /Waiting for you to open the link/);
   const resend = page.getByRole("button", { name: /Resend link in \d+s/ });
   assert.equal(await resend.getAttribute("aria-disabled"), "true", "resend stays focusable during the countdown");
   await axe(page, "sign-in page, waiting");
@@ -145,6 +145,9 @@ test("reduced motion: radar and Iris are still, the waiting state still works", 
   assert.ok((await rings.count()) > 0, "radar rings are rendered");
   const animated = await rings.evaluateAll((els) => els.map((e) => getComputedStyle(e).animationName).filter((n) => n !== "none"));
   assert.deepEqual(animated, [], "radar rings don't animate");
+  const iris = await page.locator(".iris-float, .iris-shadow, .iris-spark-live").evaluateAll((els) => els.map((e) => getComputedStyle(e).animationName));
+  assert.equal(iris.length, 3, "float, shadow and live spark are rendered");
+  assert.deepEqual(iris.filter((n) => n !== "none"), [], "Iris's float, shadow and spark don't animate");
   await axe(page, "sign-in page, waiting, reduced motion");
   await ctx.close();
 });

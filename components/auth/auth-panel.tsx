@@ -28,9 +28,10 @@ export interface AuthSignals {
 
 const RESEND_S = 60; // Supabase's default minimum interval between emails to one address
 
+// Input text is 16px on phones (iOS zooms into anything smaller), the 13px UI base from md up.
 // Form controls are recessed (inner shadow), buttons are raised (top-edge highlight). Radius rule: globals.css.
 const input =
-  "h-11 w-full rounded-xl border border-line-control bg-bg px-3 text-base text-fg shadow-[inset_0_1px_2px_oklch(0_0_0/0.35)] transition-colors placeholder:text-fg-muted focus-visible:border-accent/60 aria-invalid:border-danger";
+  "h-11 w-full rounded-xl border border-line-control bg-bg px-3 text-base text-fg md:text-ui shadow-[inset_0_1px_2px_oklch(0_0_0/0.35)] transition-colors placeholder:text-fg-muted focus-visible:border-accent/60 aria-invalid:border-danger";
 const primary =
   "relative h-11 w-full overflow-hidden rounded-xl bg-accent text-sm font-medium text-accent-ink inset-shadow-edge transition hover:brightness-105 active:scale-[0.98] aria-busy:cursor-progress aria-busy:btn-busy disabled:opacity-60";
 const textButton = "rounded-md text-ui text-fg-muted underline-offset-2 transition-colors hover:text-fg hover:underline aria-disabled:cursor-default aria-disabled:no-underline aria-disabled:opacity-70";
@@ -170,7 +171,7 @@ export function AuthPanel({
 
   if (!remoteEnabled) {
     return (
-      <div className="flex w-full max-w-[22rem] flex-col gap-2">
+      <div className="flex w-full max-w-[22rem] lg:max-w-[24rem] flex-col gap-2">
         <Heading className="text-2xl font-semibold tracking-display text-fg">Sign in</Heading>
         <p className="text-ui text-fg-muted">Accounts aren&rsquo;t set up on this server, so everything you make stays in this browser.</p>
       </div>
@@ -179,7 +180,7 @@ export function AuthPanel({
 
   if (!ready) {
     return (
-      <div aria-busy className="flex w-full max-w-[22rem] flex-col gap-5">
+      <div aria-busy className="flex w-full max-w-[22rem] lg:max-w-[24rem] flex-col gap-5">
         <span className="h-7 w-40 rounded-lg bg-fg/[0.06] motion-safe:animate-pulse" />
         <span className="h-11 rounded-xl bg-fg/[0.06] motion-safe:animate-pulse" />
         <span className="h-11 rounded-xl bg-fg/[0.06] motion-safe:animate-pulse" />
@@ -195,13 +196,13 @@ export function AuthPanel({
   );
 
   return (
-    <div className="flex w-full max-w-[22rem] flex-col gap-5">
+    <div className="flex w-full max-w-[22rem] lg:max-w-[24rem] flex-col gap-5">
       {view === "waiting" && <Radar ref={radarRef} done={signedIn} />}
-      <header className="flex flex-col gap-1.5">
+      <header className="flex flex-col gap-2">
         <Heading ref={headingRef} tabIndex={-1} className="text-2xl font-semibold tracking-display text-fg outline-none">
           {title}
         </Heading>
-        <p className="text-ui text-fg-muted">
+        <p className="text-ui text-pretty text-fg-muted">
           {view === "waiting" ? (
             sent === "existing" ? (
               <>
@@ -216,7 +217,7 @@ export function AuthPanel({
           ) : view === "code" ? (
             "Use the 6-digit code from your sign-in email."
           ) : (
-            "Keep your history on every device and get 40 free credits."
+            "Keep your history on every device. New accounts get 40 free credits."
           )}
         </p>
       </header>
@@ -243,7 +244,7 @@ export function AuthPanel({
             }}
             className="flex flex-col gap-2"
           >
-            <label htmlFor={`${id}-email`} className={label}>Work email</label>
+            <label htmlFor={`${id}-email`} className={label}>Email</label>
             {emailInput}
             {errorText}
             <button type="submit" disabled={busy !== null} aria-busy={busy === "email"} className={`${primary} mt-2`}>
@@ -308,7 +309,7 @@ export function AuthPanel({
         <form onSubmit={verify} className="flex flex-col gap-2">
           {!sent && (
             <div className="mb-3 flex flex-col gap-2">
-              <label htmlFor={`${id}-email`} className={label}>Work email</label>
+              <label htmlFor={`${id}-email`} className={label}>Email</label>
               {emailInput}
             </div>
           )}
@@ -361,8 +362,9 @@ export function AuthPanel({
         </form>
       )}
 
-      <p className="text-xs text-fg-muted">
-        No password needed. Runs you made before signing in come with you. By continuing you agree to the{" "}
+      {/* 20px gap + 12px: the legal line reads as a footnote, apart from the form. */}
+      <p className="mt-3 text-xs text-fg-muted">
+        By continuing you agree to the{" "}
         <Link href="/terms" className="rounded-sm text-fg underline underline-offset-2">Terms</Link> and{" "}
         <Link href="/privacy" className="rounded-sm text-fg underline underline-offset-2">Privacy Policy</Link>.
       </p>

@@ -8,32 +8,35 @@ import { Logo } from "@/components/logo";
 import { AuthPanel, type AuthStatus } from "./auth-panel";
 import { Creature, type Field, type Mood } from "./creature";
 
-/** The stage badge, by status. Each line is true whenever it shows: no invented technical theatre. */
-const BADGE: Record<AuthStatus, { label: string; tone: "muted" | "live" | "done" | "error" }> = {
-  idle: { label: "Iris is standing guard", tone: "muted" },
+/** The stage badge, by status. Nothing while idle: the pill only appears when there is real state to report. */
+const BADGE: Record<Exclude<AuthStatus, "idle">, { label: string; tone: "live" | "done" | "error" }> = {
   google: { label: "Opening Google sign-in", tone: "live" },
   sending: { label: "Sending your link", tone: "live" },
-  waiting: { label: "Waiting for email confirmation", tone: "live" },
+  waiting: { label: "Waiting for you to open the link", tone: "live" },
   signedIn: { label: "Signed in. Taking you back", tone: "done" },
-  error: { label: "That didn't go through", tone: "error" },
+  error: { label: "Sign-in failed", tone: "error" },
 };
+
+/** Something is in flight: Iris's forehead spark pulses while it lasts. */
+const LIVE = new Set<AuthStatus>(["google", "sending", "waiting"]);
 
 /**
  * Floating glass status pill. The dot shows real state (pulsing while something is in flight), the only
  * kind of dot the design rules allow. aria-hidden: the form's own status line announces the same thing.
  */
 function StatusBadge({ status }: { status: AuthStatus }) {
+  if (status === "idle") return null;
   const { label, tone } = BADGE[status];
   return (
     <div
       aria-hidden
-      className="glass-media absolute bottom-6 left-1/2 z-10 hidden h-8 md:flex -translate-x-1/2 items-center gap-2 whitespace-nowrap rounded-full border border-white/10 pl-2.5 pr-3.5 text-2xs font-medium text-fg inset-shadow-edge"
+      className="glass-media absolute bottom-8 left-1/2 z-10 hidden h-8 md:flex -translate-x-1/2 items-center gap-2 whitespace-nowrap rounded-full border border-white/10 pl-2.5 pr-3.5 text-2xs font-medium text-fg inset-shadow-edge"
     >
       {tone === "done" ? (
         <Check size={12} weight="bold" className="text-accent-text" />
       ) : (
         <span
-          className={`size-1.5 rounded-full ${tone === "error" ? "bg-danger" : tone === "live" ? "bg-accent motion-safe:animate-pulse" : "bg-fg-muted"}`}
+          className={`size-1.5 rounded-full ${tone === "error" ? "bg-danger" : "bg-accent motion-safe:animate-pulse"}`}
         />
       )}
       <span key={status} className="transition-opacity duration-150 starting:opacity-0">
@@ -43,7 +46,7 @@ function StatusBadge({ status }: { status: AuthStatus }) {
   );
 }
 
-/** Left side: Iris on the stage, over a faint dot grid, framed by viewfinder corners (the logo's frame). */
+/** Left side: Iris on the stage, over a dot grid that fades out in a circle. Iris's own brackets are the frame. */
 function CreaturePanel(props: {
   field: Field;
   peek: boolean;
@@ -51,22 +54,20 @@ function CreaturePanel(props: {
   status: AuthStatus;
   emailRef: RefObject<HTMLInputElement | null>;
   radarRef: RefObject<HTMLDivElement | null>;
+  /** The full page has room for a larger Iris from lg up; the modal's stage doesn't. */
+  wide?: boolean;
   className?: string;
 }) {
-  const corner = "pointer-events-none absolute size-5 border-line-strong";
   return (
     <div className={`auth-stage relative isolate flex flex-col items-center justify-center bg-stage p-4 md:p-10 ${props.className ?? ""}`}>
-      <span aria-hidden className={`${corner} left-4 top-4 rounded-tl-md border-l border-t`} />
-      <span aria-hidden className={`${corner} right-4 top-4 rounded-tr-md border-r border-t`} />
-      <span aria-hidden className={`${corner} bottom-4 left-4 rounded-bl-md border-b border-l`} />
-      <span aria-hidden className={`${corner} bottom-4 right-4 rounded-br-md border-b border-r`} />
-      <div className="relative z-[1] w-32 md:w-full md:max-w-[18rem]">
+      <div className={`relative z-[1] w-32 md:w-full md:max-w-[18rem] ${props.wide ? "lg:max-w-[20rem]" : ""}`}>
         <Creature
           field={props.field}
           peek={props.peek}
           mood={props.mood}
           emailRef={props.emailRef}
           watch={props.status === "waiting" ? props.radarRef : null}
+          live={LIVE.has(props.status)}
         />
       </div>
       {/* Hidden on phones (short band): the form's status line carries the same information. */}
@@ -113,11 +114,12 @@ export function AuthExperience({ variant }: { variant: "page" | "modal" }) {
             href="/"
             className="absolute left-6 top-6 z-20 flex h-9 items-center gap-2 rounded-full border border-line bg-bg/60 px-3.5 text-ui font-medium text-fg-muted inset-shadow-edge transition hover:border-line-strong hover:text-fg active:scale-[0.98] md:left-8 md:top-8"
           >
-            <ArrowLeft size={14} weight="bold" aria-hidden /> Back to Studio
+            <ArrowLeft size={14} weight="bold" aria-hidden /> Back to studio
           </Link>
           {/* One instance at every width: a short band on phones, the full half from md up. */}
-          <CreaturePanel {...stage} className="h-44 md:h-auto md:flex-1" />
-          <span className="absolute bottom-8 left-8 z-20 hidden items-center gap-2 text-[15px] font-semibold tracking-tight text-fg md:flex">
+          <CreaturePanel {...stage} wide className="h-44 md:h-auto md:flex-1" />
+          {/* Same bottom edge and height as the status pill, so the two read as one row. */}
+          <span className="absolute bottom-8 left-8 z-20 hidden h-8 items-center gap-2 text-[15px] font-semibold tracking-tight text-fg md:flex">
             <Logo /> Intent Studio
           </span>
         </div>

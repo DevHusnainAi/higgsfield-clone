@@ -12,7 +12,7 @@ export default function LegalLayout({ children }: LayoutProps<"/">) {
           href="/"
           className="flex h-9 items-center gap-2 rounded-full border border-line px-3.5 text-ui font-medium text-fg-muted inset-shadow-edge transition hover:border-line-strong hover:text-fg active:scale-[0.98]"
         >
-          <ArrowLeft size={14} weight="bold" aria-hidden /> Back to Studio
+          <ArrowLeft size={14} weight="bold" aria-hidden /> Back to studio
         </Link>
         <span className="flex items-center gap-2 text-[15px] font-semibold tracking-tight text-fg">
           <Logo /> Intent Studio

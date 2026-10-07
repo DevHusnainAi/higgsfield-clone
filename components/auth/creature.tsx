@@ -13,6 +13,9 @@ const EYE_R = 22;
 const PUPIL_TRAVEL = 9;
 const PAW_DROP = 150;
 const BODY = { x: 120, y: 125 };
+const GROUND = { x: 120, y: 209 }; // the shadow's centre, just under the body
+const PUPIL = { watch: 1.15, error: 0.8 }; // pupil scale: wide while watching the radar, narrow just after an error
+const ERROR_PUPIL_MS = 1200;
 
 // Response rates (per second) for frame-rate independent smoothing; see lib/gaze.ts.
 const RATE = { pupil: 14, head: 8, home: 4, lid: 40 };
@@ -50,11 +53,14 @@ export function Creature({
   mood,
   emailRef,
   watch,
+  live = false,
 }: {
   field: Field;
   peek: boolean;
   mood: Mood;
   emailRef: RefObject<HTMLInputElement | null>;
+  /** Something is in flight (Google opening, sending, waiting): the forehead spark pulses. */
+  live?: boolean;
   /** While set, Iris watches this element (the radar) unless the pointer moved in the last 1.5s. */
   watch: RefObject<HTMLElement | null> | null;
 }) {
@@ -80,6 +86,7 @@ export function Creature({
     let last = 0;
     const pupils = EYES.map(() => ({ x: 0, y: 0 }));
     const head = { x: 0, y: 0, r: 0 };
+    let pupilScale = 1;
     const lids = [0, 0];
     const paws: Spring[] = [{ x: 1, v: 0 }, { x: 1, v: 0 }]; // 1 = resting below, 0 = over the eyes
     let hop: Spring = { x: 0, v: 0 };
@@ -120,6 +127,7 @@ export function Creature({
         else target = pointer;
       }
       const rate = target ? RATE.pupil : RATE.home;
+      const pupilTo = reduce ? 1 : mood.kind === "error" && now - mood.at < ERROR_PUPIL_MS ? PUPIL.error : watching && !cover ? PUPIL.watch : 1;
 
       let busy = false;
       const ease = (cur: number, to: number, r: number) => {
@@ -128,11 +136,14 @@ export function Creature({
         return Math.abs(next - to) > 0.01 ? next : to;
       };
 
+      pupilScale = reduce ? pupilTo : ease(pupilScale, pupilTo, RATE.head);
+      if (mood.kind === "error" && now - mood.at < ERROR_PUPIL_MS) busy = true; // wake again to widen back
       EYES.forEach((eye, i) => {
         const g = target ? gaze(target, toClient(eye), PUPIL_TRAVEL, 300 * scale) : { x: 0, y: 0 };
         pupils[i].x = ease(pupils[i].x, g.x, rate);
         pupils[i].y = ease(pupils[i].y, g.y, rate);
-        set(`pupil${i}`, `translate(${q(pupils[i].x)} ${q(pupils[i].y)})`);
+        const s = q(pupilScale);
+        set(`pupil${i}`, `translate(${q(pupils[i].x + eye.x)} ${q(pupils[i].y + eye.y)}) scale(${s}) translate(${-eye.x} ${-eye.y})`);
       });
 
       // Head and brackets lean toward the target; nearer parts move more (depth).
@@ -179,6 +190,15 @@ export function Creature({
       }
       set("head", `translate(${q(head.x + shake)} ${q(head.y + hop.x)}) rotate(${q(head.r)} ${BODY.x} ${BODY.y})`);
       set("frame", `translate(${q(head.x / 3)} ${q(head.y / 3)})`);
+      // Edge light stays put while the head tilts, so it slides along the top edge. The ground shadow
+      // tightens and fades as Iris leaves the floor on a hop (hop.x is negative going up).
+      set("rim", `translate(${q(-head.r * 4)} 0)`);
+      const lift = Math.min(1, Math.max(0, -hop.x / 40));
+      set("shadow", `translate(${GROUND.x} ${GROUND.y}) scale(${q(1 - lift * 0.35)}) translate(${-GROUND.x} ${-GROUND.y})`);
+      p.shadow?.setAttribute("opacity", String(q(1 - lift * 0.5)));
+      // The CSS idle float pauses while Iris covers its eyes or hops, so the two never stack.
+      if (cover || Math.abs(hop.x) > 0.5) el.dataset.still = "";
+      else delete el.dataset.still;
 
       // Asleep once settled; woken by pointer moves, caret moves, prop changes and the blink heartbeat.
       frame = busy ? requestAnimationFrame(tick) : 0;
@@ -230,8 +250,12 @@ export function Creature({
   }, [emailRef]);
 
   return (
-    <svg ref={svg} viewBox="0 0 240 240" aria-hidden className="w-full max-w-[18rem] overflow-hidden" data-state="track">
+    <svg ref={svg} viewBox="0 0 240 240" aria-hidden className="w-full overflow-hidden" data-state="track">
       <defs>
+        <radialGradient id={`${clip}-shadow`}>
+          <stop offset="0" stopColor="oklch(0 0 0)" stopOpacity="0.55" />
+          <stop offset="1" stopColor="oklch(0 0 0)" stopOpacity="0" />
+        </radialGradient>
         {EYES.map((e, i) => (
           <clipPath key={i} id={`${clip}-${i}`}>
             <circle cx={e.x} cy={e.y} r={EYE_R} />
@@ -244,10 +268,24 @@ export function Creature({
         <path d="M24 64V50a16 16 0 0 1 16-16h14M186 34h14a16 16 0 0 1 16 16v14M216 186v14a16 16 0 0 1-16 16h-14M54 216H40a16 16 0 0 1-16-16v-14" />
       </g>
 
+      {/* Ground shadow: stays on the floor while the body floats above it. */}
+      <g className="iris-shadow">
+        <g data-part="shadow">
+          <ellipse cx={GROUND.x} cy={GROUND.y} rx="64" ry="7" fill={`url(#${clip}-shadow)`} />
+        </g>
+      </g>
+
+      <g className="iris-float">
       <g data-part="head">
         <rect x="40" y="50" width="160" height="150" rx="44" className="fill-surface-raised stroke-line-strong" strokeWidth="1.5" />
-        <path d="M84 51.5H156" className="stroke-[oklch(1_0_0/0.06)]" strokeWidth="1.5" strokeLinecap="round" />
-        <path d={SPARK} transform="translate(105.6 63.6) scale(1.2)" className={`fill-accent transition-opacity duration-300 ${field === "code" ? "opacity-40" : ""}`} />
+        <g data-part="rim">
+          <path d="M84 51.5H156" className="stroke-[oklch(1_0_0/0.12)]" strokeWidth="1.5" strokeLinecap="round" />
+        </g>
+        <path
+          d={SPARK}
+          transform="translate(105.6 63.6) scale(1.2)"
+          className={`fill-accent transition-opacity duration-300 ${field === "code" ? "opacity-40" : ""} ${live ? "iris-spark-live" : ""}`}
+        />
 
         {EYES.map((e, i) => (
           <g key={i} clipPath={`url(#${clip}-${i})`}>
@@ -284,6 +322,7 @@ export function Creature({
           />
         </g>
       ))}
+      </g>
     </svg>
   );
 }
