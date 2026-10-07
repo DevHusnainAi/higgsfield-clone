@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import { useRef, type ComponentType, type ReactNode } from "react";
 import { CheckCircle, CircleNotch, ClockCounterClockwise, FilmStrip, Heart, ImageSquare, List, Plus, Sparkle, SquaresFour, Terminal, WarningCircle, X, type IconProps } from "@phosphor-icons/react";
 import { AccountRow } from "@/components/account";
@@ -89,10 +90,9 @@ function ActivateHistory({ onNavigate, placeholder = false }: { onNavigate?: () 
   );
 }
 
-function RecentRuns({ go }: { go: (fn: () => void) => () => void }) {
+function RecentRuns({ go, closeDrawer, home }: { go: (fn: () => void) => () => void; closeDrawer?: () => void; home: boolean }) {
   const { runs, selectedId, view, auth } = useStudio();
   const guest = remoteEnabled && auth.status === "anonymous";
-  const closeDrawer = go(() => {});
   // One row per run: a 4-output batch shows its first output, not four rows.
   const seen = new Set<string>();
   const recent: { g: Generation; outputs: number }[] = [];
@@ -120,7 +120,7 @@ function RecentRuns({ go }: { go: (fn: () => void) => () => void }) {
         <ul className="flex flex-col gap-0.5">
           {recent.map(({ g, outputs }) => {
             const s = status(g);
-            const current = view === "create" && (selectedId === g.id || (!!g.batchId && runs.some((r) => r.id === selectedId && r.batchId === g.batchId)));
+            const current = home && view === "create" && (selectedId === g.id || (!!g.batchId && runs.some((r) => r.id === selectedId && r.batchId === g.batchId)));
             return (
               <li key={g.id}>
                 <button
@@ -188,8 +188,12 @@ function SidebarBody({ onNavigate, onClose }: { onNavigate?: () => void; onClose
   const { runs, favorites, view, sessionStart, balance } = useStudio();
   const devConsole = useDevConsoleOpen();
   const running = runs.filter((g) => g.status === "queued" || g.status === "generating").length;
+  // Studio views are store state on "/": from another page (settings), set the state, then go home to show it.
+  const home = usePathname() === "/";
+  const router = useRouter();
   const go = (fn: () => void) => () => {
     fn();
+    if (!home) router.push("/");
     onNavigate?.();
   };
 
@@ -201,7 +205,7 @@ function SidebarBody({ onNavigate, onClose }: { onNavigate?: () => void; onClose
     else held += g.credits.amount;
   }
 
-  const isActive = (v: View) => view === v;
+  const isActive = (v: View) => home && view === v;
 
   return (
     <div className="flex h-full flex-col">
@@ -252,7 +256,7 @@ function SidebarBody({ onNavigate, onClose }: { onNavigate?: () => void; onClose
           ))}
         </div>
 
-        <RecentRuns go={go} />
+        <RecentRuns go={go} closeDrawer={onNavigate} home={home} />
       </nav>
 
       <div className="m-3 rounded-xl border border-line bg-surface-raised p-3 inset-shadow-edge">

@@ -6,10 +6,15 @@
 // and complete_generation refunds the held credits in the same statement: a fallback never costs anything.
 // The UI labels such runs everywhere. Only 402 triggers it; timeouts, cancels and other errors fail and refund.
 // Set DEMO_FALLBACK=off to fail and refund on 402 like any other provider error.
+//
+// Bring your own key: a user's saved key (settings page) is used before the shared studio keys. A 402 on the
+// user's own key is their account's billing, not ours, so it fails and refunds instead of faking a result.
 import { InferenceClient } from "@huggingface/inference";
 import type { FailureReason } from "../generation.ts";
 import type { AspectRatio, Intent } from "../intent.ts";
 import { DEFAULT_MODEL, MODELS } from "../models.ts";
+import type { Provider } from "../provider-keys.ts";
+import { userKeys } from "./key-vault.ts";
 import { admin, BUCKET, REFERENCES } from "./supabase.ts";
 
 const FPS = 24;
@@ -41,12 +46,21 @@ function imageSize(ratio: AspectRatio) {
   return { width: Math.round((w * scale) / 64) * 64, height: Math.round((h * scale) / 64) * 64 };
 }
 
-async function render(intent: Intent, signal: AbortSignal): Promise<Blob> {
+/**
+ * The token for a model: the user's own keys first, then the studio's shared ones. A fal key (no "hf_" prefix)
+ * makes the client call fal directly, billed to fal; an HF token works for every model (HF routes and bills).
+ */
+export function pickToken(provider: string, own: Partial<Record<Provider, string>>, env: { FAL_KEY?: string; HF_TOKEN?: string }) {
+  const fal = provider === "fal-ai";
+  const mine = (fal && own.fal) || own.hf;
+  if (mine) return { token: mine, shared: false };
+  const token = (fal && env.FAL_KEY) || env.HF_TOKEN;
+  return token ? { token, shared: true } : null;
+}
+
+async function render(intent: Intent, token: string, signal: AbortSignal): Promise<Blob> {
   const id = intent.model ?? DEFAULT_MODEL[intent.media];
   const spec = MODELS[id];
-  // A fal key (no "hf_" prefix) makes the client call fal directly, billed to fal; otherwise HF routes and bills.
-  const token = (spec.provider === "fal-ai" && process.env.FAL_KEY) || process.env.HF_TOKEN;
-  if (!token) throw new Error(`Set HF_TOKEN${spec.provider === "fal-ai" ? " or FAL_KEY" : ""} to render ${spec.label}`);
   const hf = new InferenceClient(token);
   // Only send what the user set; otherwise the provider's own defaults apply.
   const common = {
@@ -117,17 +131,20 @@ export async function runGeneration(row: { id: string; user_id: string; intent: 
   inFlight.set(row.id, ctrl);
   try {
     await admin.rpc("mark_generating", { p_id: row.id, p_progress: 0.05 });
+    const spec = MODELS[row.intent.model ?? DEFAULT_MODEL[row.intent.media]];
+    const picked = pickToken(spec.provider, await userKeys(row.user_id), { FAL_KEY: process.env.FAL_KEY, HF_TOKEN: process.env.HF_TOKEN });
+    if (!picked) throw new Error(`Set HF_TOKEN${spec.provider === "fal-ai" ? " or FAL_KEY" : ""} to render ${spec.label}`);
     let path: string;
     let fallback = false;
     try {
-      const blob = await render(row.intent, ctrl.signal);
+      const blob = await render(row.intent, picked.token, ctrl.signal);
       await admin.rpc("mark_generating", { p_id: row.id, p_progress: 0.9 });
       const type = blob.type || (row.intent.media === "video" ? "video/mp4" : "image/png");
       path = `${row.user_id}/${row.id}.${EXT[type] ?? "bin"}`;
       const upload = await admin.storage.from(BUCKET).upload(path, blob, { contentType: type, upsert: true });
       if (upload.error) throw upload.error;
     } catch (err) {
-      if (!DEMO_FALLBACK || statusOf(err) !== 402 || ctrl.signal.aborted) throw err;
+      if (!DEMO_FALLBACK || !picked.shared || statusOf(err) !== 402 || ctrl.signal.aborted) throw err;
       console.warn(`[demo-fallback] generation ${row.id}: provider returned 402 (${MODELS[row.intent.model].hfId}); completing with a stock ${row.intent.media}`, (err as Error).message);
       await new Promise((r) => setTimeout(r, FALLBACK_DELAY_MS));
       path = fallbackAsset(row.id, row.intent);

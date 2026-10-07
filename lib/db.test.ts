@@ -297,3 +297,26 @@ test("accounts: browser roles cannot settle grants or merge", async () => {
   await assert.rejects(db.query("select public.settle_account($1, true)", [ALICE]), /permission denied/);
   await assert.rejects(db.query("select public.merge_anonymous_history($1, $2)", [BOB, ALICE]), /permission denied/);
 });
+
+test("settings: provider keys are invisible to browser roles, even the owner's", async () => {
+  const db = await setup();
+  await db.query("insert into public.provider_keys (user_id, provider, secret, hint) values ($1, 'hf', 'v1:x:y:z', 'abcd')", [ALICE]);
+  await db.exec(`set role authenticated; select set_config('request.jwt.claim.sub', '${ALICE}', false);`);
+  await assert.rejects(db.query("select * from public.provider_keys"), /permission denied/);
+  await assert.rejects(db.query("insert into public.provider_keys (user_id, provider, secret, hint) values ($1, 'fal', 's', 'abcd')", [ALICE]), /permission denied/);
+  await assert.rejects(db.query("select * from public.account_stats($1)", [ALICE]), /permission denied/);
+  await db.exec("reset role");
+  await assert.rejects(db.query("insert into public.provider_keys (user_id, provider, secret, hint) values ($1, 'openai', 's', 'abcd')", [BOB]), /check/);
+});
+
+test("settings: account_stats counts every run and settles credits by state", async () => {
+  const db = await setup();
+  const done = await start(db, ALICE, 4);
+  await db.query("select * from public.complete_generation($1, 'a/b.png')", [done.id]);
+  const failed = await start(db, ALICE, 6);
+  await db.query("select * from public.fail_generation($1, 'capacity')", [failed.id]);
+  await start(db, ALICE, 2); // still held: counted as a run, not as used or refunded
+  await start(db, BOB, 9);
+  const s = await one(db, "select * from public.account_stats($1)", [ALICE]);
+  assert.deepEqual(s, { runs: 3, done: 1, failed: 1, credits_used: 4, credits_refunded: 6 });
+});

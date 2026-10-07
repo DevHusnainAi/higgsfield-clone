@@ -3,6 +3,7 @@
 import { useEffect, useId, useRef, type RefObject } from "react";
 import { SPARK } from "@/components/logo";
 import { approach, gaze, PAW_SPRING, springStep, type Spring, type Vec } from "@/lib/gaze";
+import { reducedMotion as reduceMotion } from "@/lib/motion";
 
 export type Field = "email" | "code" | null;
 export type Mood = { kind: "idle" | "happy" | "error"; at: number };
@@ -21,8 +22,6 @@ const ERROR_PUPIL_MS = 1200;
 const RATE = { pupil: 14, head: 8, home: 4, lid: 40 };
 const SHAKE = [0, -6, 6, -4, 4, 0];
 const SHAKE_MS = 360;
-
-const reduceMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 const POINTER_HOLD_MS = 1500; // while waiting, a moving pointer wins the gaze for this long
 const q = (n: number) => Math.round(n * 100) / 100; // stable transform strings: no sub-pixel shimmer
