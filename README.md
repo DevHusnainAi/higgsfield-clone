@@ -159,7 +159,7 @@ sequenceDiagram
 ```
 
 - **Upgrade in place.** A guest *links* Google or an email to their anonymous user. The user id doesn't change, so history, balance and start frames carry over with no data migration and no RLS change.
-- **Existing accounts.** Signing in to an account that already exists switches users. The guest's *finished* runs move across via `merge_anonymous_history`; **credits never move**, and runs still holding credits settle with the guest, so a merge can't launder a refund.
+- **Existing accounts.** Signing in to an account that already exists switches users. When linking Google reports the account already exists (`email_exists`, `identity_already_exists`, `user_already_exists`), the guest signs in to it instead, at most once per 5 minutes. The guest's *finished* runs move across via `merge_anonymous_history`; **credits never move**, and runs still holding credits settle with the guest, so a merge can't launder a refund.
 - **Credits.** Guests start with **8**. A permanent account receives **40 exactly once** in its life (`signup_grant_at`), whether it signed up directly or upgraded from a guest.
 - **Privacy on shared devices.** The offline history cache records which account owns it; a different account or a sign-out clears it before anything renders, and replies sent as a previous account are dropped.
 
@@ -173,6 +173,7 @@ sequenceDiagram
 | IDOR on cancel | Ownership checked in the route **and** inside `cancel_generation(id, user)` | `[id]/cancel/route.ts` |
 | Direct table writes | No write policies; `INSERT/UPDATE/DELETE` revoked from `anon` and `authenticated` | `…_security_hardening.sql` |
 | Privileged functions from the browser | `EXECUTE` granted only to `service_role`; `search_path = ''` | all migrations |
+| Reading `auth.users` during a merge | `merge_anonymous_history` is `SECURITY DEFINER` (hosted `service_role` can't read `auth`), callable by `service_role` only, every name schema-qualified | `…_merge_security_definer.sql` |
 | Credit farming | 8-credit guests, a once-per-account 40 grant, history-only merges, 3 active runs per user | `…_accounts.sql` |
 | Forged merge | Server verifies both tokens with the auth server; source must be anonymous, target permanent | `/api/account/merge` |
 | Request flooding | 15 writes / 10 min per user **and** per IP, stored in Postgres, fails closed, `429` + `Retry-After` | `rate_limit_hit` |
@@ -255,8 +256,9 @@ npm run build
 
 | Suite | What it proves |
 |---|---|
-| `lib/db.test.ts` | Applies the **real migrations** to PGlite (Postgres in WASM) with stubbed Supabase schemas. Holds, exactly-once settlement, the status/credit constraint, the stale sweep, batches, the active-run cap, rate limits, storage policies and quota, the 402 fallback refund, RLS for cross-user reads/writes/RPCs, the 8/40 grants, and history-only merges. No Docker, no network. |
+| `lib/db.test.ts` | Applies the **real migrations** to PGlite (Postgres in WASM) with stubbed Supabase schemas. Holds, exactly-once settlement, the status/credit constraint, the stale sweep, batches, the active-run cap, rate limits, storage policies and quota, the 402 fallback refund, RLS for cross-user reads/writes/RPCs, the 8/40 grants, and history-only merges (run as `service_role`, which can't read `auth.users`, as on hosted Supabase). No Docker, no network. |
 | `lib/logic.test.ts` | Parser detection, negation and clamping, the override trust boundary, start-frame path allow-list against URL/traversal/`file://` payloads, remix, cheaper alternatives, batch pricing, state-machine invariants. |
+| `lib/remote.test.ts` | Every "that account already exists" answer from a Google link is recognised and switches to sign-in. |
 | `lib/store.test.ts` | Cached history is kept only for the account that owns it. |
 | `lib/gaze.test.ts` | Gaze stays inside the eye; smoothing is identical at 60Hz and 120Hz; the paw spring overshoots ~4% and settles in under 0.4s. |
 | `lib/supabase-key.test.ts` | Only a service-role key is accepted as the server key. |
@@ -280,6 +282,7 @@ app/
   api/account/merge/             guest history → signed-in account (history only)
   (studio)/@modal/(.)sign-in/    in-app navigation to /sign-in, intercepted into a modal over the studio
   (auth)/sign-in/                direct load or refresh of /sign-in: the full split page (no guest session)
+  (legal)/                       privacy policy and terms
   opengraph-image.tsx            social card rendered from the real parser
 components/                      composer, chips, advanced panel, start frames, stage, inspector, feed, library, sidebar, account
   auth/                          sign-in form, Iris (the creature), modal and page shells
@@ -288,11 +291,13 @@ lib/
   generation.ts                  state machine, pricing, batches, cheaper alternatives, simulator
   models.ts                      model registry and rate card (client + server)
   store.ts                       client store, auth state, polling, backoff, offline cache
+  dev-log.ts                     dev console event stream
   gaze.ts                        Iris's motion maths: gaze vector, frame-rate independent smoothing, damped spring
   remote.ts                      Supabase session, sign-in flows, authenticated fetch, start-frame storage
   server/                        service-role client, token checks, rate limiter, render worker
 supabase/migrations/             schema, RPCs, RLS, storage policies, quotas, accounts (applied in order)
-e2e/                             accessibility suite
+public/presets/                  preset photos, pre-sized 640px WebP served as static files
+e2e/                             accessibility and sign-in suites
 ```
 
 ## Known limitations
@@ -308,4 +313,4 @@ e2e/                             accessibility suite
 
 [MIT](LICENSE) © 2026 DevHusnainAi.
 
-Preset photos are from [Unsplash](https://unsplash.com/license) via [Lorem Picsum](https://picsum.photos), self-hosted in `public/presets`. Interface type is [Geist](https://vercel.com/font) (SIL Open Font License); icons are [Phosphor](https://phosphoricons.com).
+Preset photos are from [Unsplash](https://unsplash.com/license) via [Lorem Picsum](https://picsum.photos), self-hosted in `public/presets` as pre-sized WebP (served as static files, outside Next's image optimizer). Interface type is [Geist](https://vercel.com/font) (SIL Open Font License); icons are [Phosphor](https://phosphoricons.com).
