@@ -3,6 +3,7 @@
 import { DiceFive, SlidersHorizontal } from "@phosphor-icons/react";
 import { COUNT, type Intent, type IntentOverrides } from "@/lib/intent";
 import { DEFAULT_MODEL, MAX_SEED, MODELS, modelsFor, type ModelId } from "@/lib/models";
+import { useStudio } from "@/lib/store";
 import { anchor, anchoredTo, popoverClass } from "./param-chips";
 
 const ADVANCED_KEYS = ["count", "model", "seed", "guidanceScale"] as const;
@@ -20,6 +21,7 @@ export function AdvancedSettings({
   overrides: IntentOverrides;
   onOverridesChange: (o: IntentOverrides) => void;
 }) {
+  const { tier } = useStudio();
   const active = ADVANCED_KEYS.filter((k) => k in overrides).length;
   const model = MODELS[intent.model];
   const range = model.guidance;
@@ -100,7 +102,7 @@ export function AdvancedSettings({
               }}
               className={inputClass}
             >
-              {modelsFor(intent.media, Boolean(intent.reference)).map(([id, m]) => (
+              {modelsFor(intent.media, Boolean(intent.reference), tier).map(([id, m]) => (
                 <option key={id} value={id}>
                   {m.label} · {m.credits} credits{intent.media === "video" ? "/s" : ""}
                 </option>

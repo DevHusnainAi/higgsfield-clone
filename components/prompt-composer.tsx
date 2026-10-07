@@ -3,7 +3,7 @@
 import { useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { ArrowUp } from "@phosphor-icons/react";
 import { cheaperAlternatives, costBreakdown, estimateCost } from "@/lib/generation";
-import { parseIntent, type AspectRatio, type IntentOverrides } from "@/lib/intent";
+import { forTier, parseIntent, type AspectRatio, type IntentOverrides } from "@/lib/intent";
 import { remoteEnabled, uploadReference } from "@/lib/remote";
 import { startGeneration, useStudio } from "@/lib/store";
 import { AdvancedSettings } from "./advanced-settings";
@@ -21,12 +21,13 @@ export function PromptComposer({
   overrides: IntentOverrides;
   onOverridesChange: Dispatch<SetStateAction<IntentOverrides>>;
 }) {
-  const intent = useMemo(() => parseIntent(prompt, overrides), [prompt, overrides]);
+  const { balance, tier } = useStudio();
+  // The model this tier renders with, as the server will decide it: the price shown is the price charged.
+  const intent = useMemo(() => forTier(parseIntent(prompt, overrides), tier), [prompt, overrides, tier]);
   const cost = estimateCost(intent);
   const empty = !intent.prompt;
-  const { balance } = useStudio();
   const short = !empty && balance !== null && cost > balance;
-  const alternatives = short ? cheaperAlternatives(intent, balance) : [];
+  const alternatives = short ? cheaperAlternatives(intent, balance, tier) : [];
   const [local, setLocal] = useState<string | null>(null); // preview of the attached frame: an object URL after upload, or a library link
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -163,7 +164,7 @@ export function PromptComposer({
               onClick={() => {
                 const next = { ...overrides, ...alt.overrides };
                 onOverridesChange(next);
-                startGeneration(parseIntent(prompt, next));
+                startGeneration(forTier(parseIntent(prompt, next), tier));
               }}
               className="rounded-full border border-line-strong px-3 py-1 font-medium text-fg inset-shadow-edge transition hover:border-accent hover:bg-accent/10 active:scale-[0.98]"
             >

@@ -1,7 +1,7 @@
 // Rule-based prompt -> generation settings, plus manual overrides. Pure, never throws.
 // The server runs the same function on untrusted overrides, so every value is re-validated here.
 // ponytail: regex rules, not NLP; swap the detection half for an LLM call if rules stop scaling
-import { DEFAULT_MODEL, isModelId, MAX_SEED, MODELS, START_FRAME_MODEL, type ModelId } from "./models.ts";
+import { availableOn, DEFAULT_MODEL, FREE_TIER_IMAGE_MODEL, isModelId, MAX_SEED, MODELS, START_FRAME_MODEL, type ModelId, type Tier } from "./models.ts";
 
 export type MediaType = "image" | "video";
 
@@ -277,6 +277,15 @@ export function parseIntent(input: unknown, overridesInput?: unknown): Intent {
     matched,
     warnings,
   };
+}
+
+/**
+ * The intent as it will render on this tier. Free tier: an image model it can't run becomes SDXL Lightning
+ * (which has no guidance setting). Used by the composer for the price and the server for the charge, so they agree.
+ */
+export function forTier(intent: Intent, tier: Tier): Intent {
+  if (availableOn(intent.model, tier)) return intent;
+  return { ...intent, model: FREE_TIER_IMAGE_MODEL, guidanceScale: null };
 }
 
 /** Overrides that rebuild `intent` from its prompt: only the values the parser wouldn't pick by itself. Seed is dropped so a remix varies. */

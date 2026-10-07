@@ -95,12 +95,14 @@ flowchart LR
     AU[Auth<br/>anonymous, magic link, Google]
   end
   HF[Hugging Face Inference Providers<br/>hf-inference · fal.ai]
+  CF[Cloudflare Workers AI<br/>free tier images]
 
   C --> S -->|Bearer JWT| G --> P
   A <--> AU
   A -->|start frame upload| ST
   S -->|guest token| M --> P
   G --> W --> HF
+  W --> CF
   W -->|bytes| ST
   W -->|settle exactly once| P
 ```
@@ -112,14 +114,17 @@ flowchart LR
 - **Auth stays in the browser.** Sessions live in supabase-js, not cookies; API routes verify bearer tokens with the auth server. Server-rendered HTML is identical for every visitor, so auth state can never cause a hydration mismatch.
 - **Rules, not an LLM, for parsing.** Predictable, testable, free and fast enough per keystroke. Swapping detection for a model call is isolated to one function.
 
-| Model | Media | Provider | Credits |
-|---|---|---|---|
-| Stable Diffusion 3 Medium | image | hf-inference | 4 / image |
-| FLUX.1 schnell | image | fal.ai | 2 / image |
-| Wan 2.2 TI2V-5B | video (text) | fal.ai | 6 / second |
-| Wan 2.2 I2V-A14B | video (start frame) | fal.ai | 8 / second |
+| Model | Media | Provider | Credits | Who it's for |
+|---|---|---|---|---|
+| SDXL Lightning | image | Cloudflare Workers AI | 4 / image | Free tier: images when you haven't saved an HF key |
+| Stable Diffusion 3 Medium | image | hf-inference | 4 / image | Your own HF key |
+| FLUX.1 schnell | image | fal.ai | 2 / image | Your own HF or fal key |
+| Wan 2.2 TI2V-5B | video (text) | fal.ai | 6 / second | Your own HF or fal key; otherwise the shared keys |
+| Wan 2.2 I2V-A14B | video (start frame) | fal.ai | 8 / second | Your own HF or fal key; otherwise the shared keys |
 
 The rate card is a mock defined once in `lib/models.ts`; client and server read the same registry, so displayed and charged prices can't drift.
+
+**Free tier.** With no saved Hugging Face key (and Cloudflare configured), images render on SDXL Lightning through the studio's Cloudflare account, at 8 steps and about a megapixel in your aspect ratio. The server decides the model before pricing (`forTier`), and the composer applies the same rule, so the price and the model in your history are what actually ran. SDXL Lightning costs the same as the SD3 default it replaces. A saved fal key still runs FLUX; only SD3 needs an HF key. Video has no free provider: on the shared keys it gets the stock fallback (refunded), and the notice points to Settings for your own fal key.
 
 ## Credits you can trust
 
@@ -188,13 +193,14 @@ sequenceDiagram
 | SSRF via start frames | Path-only contract `<uuid>/<uuid>.(png\|jpg\|webp)`, owner-folder check, bytes sent to the provider, never URLs | `lib/intent.ts`, render worker |
 | Leaked provider keys (BYOK) | AES-256-GCM with the key in `BYOK_ENCRYPTION_KEY` (server only); ciphertext bound to user and provider; table closed to browser roles, even for its owner; only the last 4 characters are ever returned; format checked on the server | `lib/server/key-vault.ts`, `…_settings.sql` |
 | Wrong server key | A publishable/anon key in `SUPABASE_SECRET_KEY` is refused at startup | `lib/server/supabase.ts` |
-| Secret leakage | `SUPABASE_SECRET_KEY`, `HF_TOKEN`, `FAL_KEY` have no `NEXT_PUBLIC_` prefix and are used only in `lib/server/*` | |
+| Secret leakage | `SUPABASE_SECRET_KEY`, `HF_TOKEN`, `FAL_KEY`, `CF_API_TOKEN` have no `NEXT_PUBLIC_` prefix and are used only in `lib/server/*` | |
 
 ## Resilience
 
 | Situation | Behaviour |
 |---|---|
-| Provider out of credit (**HTTP 402**) | Optional demo fallback: the run completes with a clearly labelled stock asset, **refunded in the same statement**, plus a toast. Only 402 on the studio's shared key triggers it; on a user's own key it fails and refunds. Set `DEMO_FALLBACK=off` to always fail and refund. |
+| Provider out of credit (**HTTP 402**) | Optional demo fallback: the run completes with a clearly labelled stock asset, **refunded in the same statement**, plus a notice linking to Settings. Only 402 on the studio's shared HF/fal keys triggers it; on a user's own key or on Cloudflare it fails and refunds. Set `DEMO_FALLBACK=off` to always fail and refund. |
+| Cloudflare error (free tier images) | Fails and refunds like any provider error; `429`/`503` count as capacity. Never the stock fallback. |
 | Provider slow or hung | 270s render timeout inside the route's 300s `maxDuration`, then `timeout`, refunded |
 | Worker dies mid-render | The stale sweep refunds it on the next history fetch |
 | User cancels | Settled and refunded first, then the render is aborted; a late result is discarded |
@@ -240,6 +246,8 @@ Node.js **22.18+** is required (the tests run TypeScript directly with Node's ty
 | `SUPABASE_SECRET_KEY` | with the URL | **server only** | same page, *secret* key | A publishable key here is refused at startup |
 | `HF_TOKEN` | for real renders | **server only** | Hugging Face → Access Tokens (fine-grained, *Make calls to Inference Providers*) | Enough for every model |
 | `FAL_KEY` | optional | **server only** | fal.ai dashboard | FLUX and Wan then bill to fal instead of HF |
+| `CF_ACCOUNT_ID` | for free tier images | **server only** | Cloudflare dashboard → Workers AI (account ID) | Both CF vars set = the free tier is on |
+| `CF_API_TOKEN` | for free tier images | **server only** | Cloudflare → API Tokens, *Workers AI* template | Without them, images use the shared HF/fal keys as before |
 | `BYOK_ENCRYPTION_KEY` | optional | **server only** | `openssl rand -base64 32` | Enables saving your own keys in Settings. Changing it makes saved keys unreadable |
 | `DEMO_FALLBACK` | optional | **server only** | | `off` = a provider 402 fails and refunds |
 | `NEXT_PUBLIC_EMAIL_CODES` | optional | browser | | `on` = offer 6-digit code entry; only after adding `{{ .Token }}` to the email templates |
@@ -266,9 +274,10 @@ npm run build
 | Suite | What it proves |
 |---|---|
 | `lib/db.test.ts` | Applies the **real migrations** to PGlite (Postgres in WASM) with stubbed Supabase schemas. Holds, exactly-once settlement, the status/credit constraint, the stale sweep, batches, the active-run cap, rate limits, storage policies and quota, the 402 fallback refund, RLS for cross-user reads/writes/RPCs, the 8/40 grants, and history-only merges (run as `service_role`, which can't read `auth.users`, as on hosted Supabase). No Docker, no network. |
-| `lib/logic.test.ts` | Parser detection, negation and clamping, the override trust boundary, start-frame path allow-list against URL/traversal/`file://` payloads, remix, cheaper alternatives, batch pricing, state-machine invariants. |
+| `lib/logic.test.ts` | Parser detection, negation and clamping, the override trust boundary, start-frame path allow-list against URL/traversal/`file://` payloads, remix, cheaper alternatives, batch pricing, state-machine invariants, and the free tier (images move to SDXL Lightning at the same price; a fal-only key keeps FLUX; video and HF-key runs untouched). |
 | `lib/remote.test.ts` | Every "that account already exists" answer from a Google link is recognised and switches to sign-in. |
 | `lib/byok.test.ts` | Key encryption round-trips with a fresh IV; a ciphertext won't open for another user, provider or key, or after tampering; key format checks; own keys are used before shared ones. |
+| `lib/providers.test.ts` | Image sizes for every ratio (multiples of 64, about a megapixel), the Cloudflare request, PNG and error handling with fetch stubbed (429 is capacity), and the stock-fallback rule (never Cloudflare or a user's own key). |
 | `lib/store.test.ts` | Cached history is kept only for the account that owns it. |
 | `lib/gaze.test.ts` | Gaze stays inside the eye; smoothing is identical at 60Hz and 120Hz; the paw spring overshoots ~4% and settles in under 0.4s. |
 | `lib/supabase-key.test.ts` | Only a service-role key is accepted as the server key. |

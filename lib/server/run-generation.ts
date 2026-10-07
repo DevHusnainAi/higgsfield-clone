@@ -9,6 +9,9 @@
 //
 // Bring your own key: a user's saved key (settings page) is used before the shared studio keys. A 402 on the
 // user's own key is their account's billing, not ours, so it fails and refunds instead of faking a result.
+//
+// Free tier images render on Cloudflare Workers AI (SDXL Lightning) with the studio's CF_* credentials. Any
+// Cloudflare error fails and refunds like other provider errors: the stock fallback is never used for it.
 import { InferenceClient } from "@huggingface/inference";
 import type { FailureReason } from "../generation.ts";
 import type { AspectRatio, Intent } from "../intent.ts";
@@ -39,8 +42,8 @@ function fallbackAsset(id: string, intent: Intent): string {
   return `https://picsum.photos/seed/${id}/${width}/${height}`;
 }
 
-/** ~1 megapixel at the requested ratio, snapped to multiples of 64 (SD3 requirement). */
-function imageSize(ratio: AspectRatio) {
+/** ~1 megapixel at the requested ratio, snapped to multiples of 64 (SD3 and SDXL requirement). */
+export function imageSize(ratio: AspectRatio) {
   const [w, h] = ratio.split(":").map(Number);
   const scale = Math.sqrt((1024 * 1024) / (w * h));
   return { width: Math.round((w * scale) / 64) * 64, height: Math.round((h * scale) / 64) * 64 };
@@ -58,8 +61,30 @@ export function pickToken(provider: string, own: Partial<Record<Provider, string
   return token ? { token, shared: true } : null;
 }
 
+export const cloudflareConfigured = () => Boolean(process.env.CF_ACCOUNT_ID && process.env.CF_API_TOKEN);
+
+const CF_STEPS = 8; // SDXL Lightning is distilled for few steps; Cloudflare allows up to 20
+
+/** The Workers AI call for an image intent. Pure, so the request shape is testable without the network. */
+export function cloudflareRequest(intent: Intent, env: { CF_ACCOUNT_ID?: string; CF_API_TOKEN?: string }) {
+  const url = `https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/ai/run/${MODELS[intent.model].hfId}`;
+  const body = { prompt: intent.prompt, ...imageSize(intent.aspectRatio), num_steps: CF_STEPS, ...(intent.seed != null && { seed: intent.seed }) };
+  return { url, init: { method: "POST", headers: { authorization: `Bearer ${env.CF_API_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify(body) } };
+}
+
+/** Returns the PNG. A non-image answer throws with the HTTP status, so 429/503 count as capacity, like HF errors. */
+export async function renderCloudflare(intent: Intent, signal: AbortSignal): Promise<Blob> {
+  if (!cloudflareConfigured()) throw new Error(`Set CF_ACCOUNT_ID and CF_API_TOKEN to render ${MODELS[intent.model].label}`);
+  const { url, init } = cloudflareRequest(intent, { CF_ACCOUNT_ID: process.env.CF_ACCOUNT_ID, CF_API_TOKEN: process.env.CF_API_TOKEN });
+  const res = await fetch(url, { ...init, signal });
+  if (res.ok && res.headers.get("content-type")?.startsWith("image/")) return res.blob();
+  const detail = (await res.text().catch(() => "")).slice(0, 300);
+  throw Object.assign(new Error(`Cloudflare Workers AI ${res.status}: ${detail}`), { httpResponse: { status: res.ok ? 502 : res.status } });
+}
+
 async function render(intent: Intent, token: string, signal: AbortSignal): Promise<Blob> {
   const id = intent.model ?? DEFAULT_MODEL[intent.media];
+  if (id === "sdxl-lightning") return renderCloudflare(intent, signal); // not an HF Inference Provider: no token
   const spec = MODELS[id];
   const hf = new InferenceClient(token);
   // Only send what the user set; otherwise the provider's own defaults apply.
@@ -116,7 +141,15 @@ async function render(intent: Intent, token: string, signal: AbortSignal): Promi
   }
 }
 
-function reasonFor(err: unknown, signal: AbortSignal): FailureReason {
+/**
+ * Whether a failed render may complete on the stock fallback: only a 402 from the studio's shared HF/fal keys.
+ * Never for a user's own key (their billing) or Cloudflare (`picked` is null), and never after a cancel or timeout.
+ */
+export function canFallBack(picked: { shared: boolean } | null, err: unknown, aborted: boolean, enabled = DEMO_FALLBACK): boolean {
+  return enabled && !!picked?.shared && statusOf(err) === 402 && !aborted;
+}
+
+export function reasonFor(err: unknown, signal: AbortSignal): FailureReason {
   if (signal.aborted) return signal.reason === "cancelled" ? "cancelled" : "timeout";
   const status = statusOf(err);
   return status === 429 || status === 503 ? "capacity" : "provider_error";
@@ -132,19 +165,20 @@ export async function runGeneration(row: { id: string; user_id: string; intent: 
   try {
     await admin.rpc("mark_generating", { p_id: row.id, p_progress: 0.05 });
     const spec = MODELS[row.intent.model ?? DEFAULT_MODEL[row.intent.media]];
-    const picked = pickToken(spec.provider, await userKeys(row.user_id), { FAL_KEY: process.env.FAL_KEY, HF_TOKEN: process.env.HF_TOKEN });
-    if (!picked) throw new Error(`Set HF_TOKEN${spec.provider === "fal-ai" ? " or FAL_KEY" : ""} to render ${spec.label}`);
+    const cloudflare = spec.provider === "cloudflare";
+    const picked = cloudflare ? null : pickToken(spec.provider, await userKeys(row.user_id), { FAL_KEY: process.env.FAL_KEY, HF_TOKEN: process.env.HF_TOKEN });
+    if (!cloudflare && !picked) throw new Error(`Set HF_TOKEN${spec.provider === "fal-ai" ? " or FAL_KEY" : ""} to render ${spec.label}`);
     let path: string;
     let fallback = false;
     try {
-      const blob = await render(row.intent, picked.token, ctrl.signal);
+      const blob = await render(row.intent, picked?.token ?? "", ctrl.signal);
       await admin.rpc("mark_generating", { p_id: row.id, p_progress: 0.9 });
       const type = blob.type || (row.intent.media === "video" ? "video/mp4" : "image/png");
       path = `${row.user_id}/${row.id}.${EXT[type] ?? "bin"}`;
       const upload = await admin.storage.from(BUCKET).upload(path, blob, { contentType: type, upsert: true });
       if (upload.error) throw upload.error;
     } catch (err) {
-      if (!DEMO_FALLBACK || !picked.shared || statusOf(err) !== 402 || ctrl.signal.aborted) throw err;
+      if (!canFallBack(picked, err, ctrl.signal.aborted)) throw err;
       console.warn(`[demo-fallback] generation ${row.id}: provider returned 402 (${MODELS[row.intent.model].hfId}); completing with a stock ${row.intent.media}`, (err as Error).message);
       await new Promise((r) => setTimeout(r, FALLBACK_DELAY_MS));
       path = fallbackAsset(row.id, row.intent);
