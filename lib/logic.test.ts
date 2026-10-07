@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseIntent, remixOverrides, sanitizeOverrides } from "./intent.ts";
+import { forTier, parseIntent, remixOverrides, sanitizeOverrides } from "./intent.ts";
+import { DEFAULT_TIER, modelsFor, type Tier } from "./models.ts";
 import { cheaperAlternatives, costBreakdown, createGeneration, estimateCost, splitBatch, simulateGeneration, statusMessage, transition, type Generation } from "./generation.ts";
 
 test("parseIntent: reads media, camera, ratio, duration", () => {
@@ -158,4 +159,35 @@ test("reference: only a user-folder path is accepted, and it forces image-to-vid
   // Falling back to a still image drops the frame.
   const still = cheaperAlternatives(parseIntent("a clip", { reference: ref }), 5).find((o) => o.overrides.media === "image")!;
   assert.equal(parseIntent("a clip", { reference: ref, ...still.overrides }).media, "image");
+});
+
+const FREE: Tier = { free: true, fal: false };
+const FREE_FAL: Tier = { free: true, fal: true }; // no HF key, but a saved fal key
+
+test("free tier: images render on SDXL Lightning at the same price; video and keyed runs are untouched", () => {
+  const sd3 = parseIntent("portrait photo of a chef, 4:5", { guidanceScale: 9 });
+  const free = forTier(sd3, FREE);
+  assert.equal(free.model, "sdxl-lightning");
+  assert.equal(free.guidanceScale, null, "SDXL Lightning has no guidance setting");
+  assert.equal(free.aspectRatio, "4:5");
+  assert.equal(estimateCost(free), estimateCost(sd3), "a price shown before the tier is known still holds");
+  assert.equal(forTier(parseIntent("a fox", { model: "flux-schnell" }), FREE).model, "sdxl-lightning");
+  assert.equal(forTier(sd3, DEFAULT_TIER), sd3, "a saved HF key: unchanged");
+  const video = parseIntent("slow dolly-in on coffee, vertical video, 6s");
+  assert.equal(forTier(video, FREE), video, "video stays on the keys");
+});
+
+test("free tier with only a fal key: images default to SDXL Lightning, FLUX still runs on the fal key", () => {
+  assert.equal(forTier(parseIntent("a fox"), FREE_FAL).model, "sdxl-lightning", "never SD3 on the shared HF account");
+  assert.equal(forTier(parseIntent("a fox", { model: "flux-schnell" }), FREE_FAL).model, "flux-schnell");
+  assert.deepEqual(modelsFor("image", false, FREE_FAL).map(([id]) => id).sort(), ["flux-schnell", "sdxl-lightning"]);
+});
+
+test("free tier: the model list and cheaper options only offer what the tier can render", () => {
+  assert.deepEqual(modelsFor("image", false, FREE).map(([id]) => id), ["sdxl-lightning"]);
+  assert.ok(modelsFor("image").some(([id]) => id === "sd3-medium"), "a saved HF key keeps SD3 and FLUX");
+  const clip = parseIntent("slow dolly-in on coffee, vertical video, 6s");
+  const options = cheaperAlternatives(clip, 10, FREE);
+  assert.ok(options.length > 0);
+  for (const o of options) if (o.overrides.model) assert.equal(o.overrides.model, "sdxl-lightning");
 });

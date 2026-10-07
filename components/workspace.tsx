@@ -9,6 +9,7 @@ import { dismissNotice, refresh, select, useStudio } from "@/lib/store";
 import { DevConsole } from "./dev-console";
 import { GenerationCard } from "./generation-card";
 import { LibraryGrid } from "./library-grid";
+import { NoticeText } from "./notice-text";
 import { PipelineStepper } from "./pipeline-stepper";
 import { PromptComposer } from "./prompt-composer";
 import { RunInspector } from "./run-inspector";
@@ -155,7 +156,9 @@ export function Workspace() {
           )}
           {notice && (
             <p role="alert" className="glass flex items-start gap-2 rounded-xl border border-line px-3 py-2 text-sm text-fg">
-              <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{notice}</span>
+              <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+                <NoticeText notice={notice} onNavigate={dismissNotice} />
+              </span>
               <button type="button" onClick={dismissNotice} aria-label="Dismiss" className="-my-0.5 grid size-6 shrink-0 place-items-center rounded-md text-fg-muted transition hover:bg-fg/[0.06] hover:text-fg">
                 <X size={14} />
               </button>

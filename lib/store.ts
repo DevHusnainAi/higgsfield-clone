@@ -3,8 +3,9 @@
 // Local mode: renders are simulated in the browser and localStorage is the only store.
 import { useSyncExternalStore } from "react";
 import { estimateCost, simulateGeneration, splitBatch, transition, type Generation } from "./generation.ts";
-import { OVERRIDE_KEYS, type Intent } from "./intent.ts";
+import { OVERRIDE_KEYS, type Intent, type MediaType } from "./intent.ts";
 import { devLog } from "./dev-log.ts";
+import { DEFAULT_TIER, type Tier } from "./models.ts";
 import { api, remoteEnabled, SyncError, watchAuth, type Auth } from "./remote.ts";
 
 const KEY = remoteEnabled ? "studio.remote-cache.v1" : "studio.history.v1";
@@ -15,7 +16,23 @@ const FAVORITES_KEY = "studio.favorites.v1";
 const OWNER_KEY = "studio.remote-cache.owner";
 const MAX_RUNS = 100;
 const STATUSES = new Set(["queued", "generating", "done", "failed"]);
-const FALLBACK_NOTICE = "Upstream API limit reached (402). Displaying fallback asset to preserve application state.";
+
+/** A notice that ends in a link (the fallback notice points to Settings). */
+export type Notice = string | { before: string; link: { label: string; href: string }; after: string };
+
+// Shown once when a run you're watching finishes on the stock fallback, and on that run's card.
+export const FALLBACK_NOTICE: Record<MediaType, Notice> = {
+  video: {
+    before: "Video isn't available on the shared tier, so this is a stock clip and your credits are back. Add your own fal.ai key in ",
+    link: { label: "Settings", href: "/settings" },
+    after: " for real video.",
+  },
+  image: {
+    before: "This image couldn't render on the shared tier, so it's a stock photo and your credits are back. Add your own key in ",
+    link: { label: "Settings", href: "/settings" },
+    after: " for real images.",
+  },
+};
 
 export type LibraryFilter = "all" | "images" | "videos" | "favorites";
 export type View = "create" | LibraryFilter;
@@ -30,18 +47,20 @@ export interface StudioState {
   /** Account balance from the server; null in local mode. */
   balance: number | null;
   /** One-line message about the user's last action (e.g. out of credits). */
-  notice: string | null;
+  notice: Notice | null;
   /** Why syncing with the server is failing, if it is. History stays readable from the cache. */
   syncIssue: string | null;
   /** A start request in flight: parsed, waiting on the server to lock credits and create the rows. */
   pending: Intent | null;
   /** Remote mode only. "unknown" until the browser has read its session (and always on the server). */
   auth: Auth;
+  /** Which image models this account can render (from the server; the keyed default until known). */
+  tier: Tier;
 }
 
 const EMPTY: StudioState = {
   runs: [], favorites: [], selectedId: null, view: "create", sessionStart: 0, balance: null, notice: null, syncIssue: null, pending: null,
-  auth: { status: "unknown" },
+  auth: { status: "unknown" }, tier: DEFAULT_TIER,
 };
 let state: StudioState | null = null;
 const listeners = new Set<() => void>();
@@ -181,7 +200,7 @@ function onAuth(auth: Auth, uid: string | null, message: string | null) {
   } catch {}
   set({
     auth,
-    ...(switched && { runs: [], balance: null, selectedId: null, pending: null, syncIssue: null }),
+    ...(switched && { runs: [], balance: null, selectedId: null, pending: null, syncIssue: null, tier: DEFAULT_TIER }),
     ...(message && { notice: message }),
   });
   void refresh(); // new balance after an upgrade's grant, or the new account's history
@@ -240,7 +259,7 @@ export function refresh(): Promise<void> {
     pollTimer = null;
     try {
       const t0 = performance.now();
-      const res = await api<{ runs: Generation[]; balance: number; swept?: number; error?: string }>("/api/generations");
+      const res = await api<{ runs: Generation[]; balance: number; swept?: number; tier?: Tier; error?: string }>("/api/generations");
       if (currentUid && res.uid !== currentUid) return schedule(0); // sent before a sign-in/out: drop it, fetch again as the new account
       devLog("api", `GET /api/generations → ${res.status} in ${Math.round(performance.now() - t0)}ms`);
       if (res.data.swept) devLog("warn", `stale sweep: ${res.data.swept} stuck run(s) failed as timeout and refunded`);
@@ -249,8 +268,14 @@ export function refresh(): Promise<void> {
       failures = 0;
       // Toast once per run that just finished on the demo fallback (not for old ones already in history).
       const wasActive = new Set(getState().runs.filter(isActive).map((g) => g.id));
-      const fellBack = res.data.runs.some((g) => g.status === "done" && g.demoFallback && wasActive.has(g.id));
-      set({ runs: res.data.runs, balance: res.data.balance, syncIssue: null, ...(fellBack && { notice: FALLBACK_NOTICE }) });
+      const fellBack = res.data.runs.find((g) => g.status === "done" && g.demoFallback && wasActive.has(g.id));
+      set({
+        runs: res.data.runs,
+        balance: res.data.balance,
+        tier: res.data.tier ?? DEFAULT_TIER,
+        syncIssue: null,
+        ...(fellBack && { notice: FALLBACK_NOTICE[fellBack.intent.media] }),
+      });
       if (res.data.runs.some(isActive)) schedule(POLL_MS);
     } catch (err) {
       failures++;

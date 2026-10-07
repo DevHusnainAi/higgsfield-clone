@@ -6,7 +6,7 @@ import { CheckCircle, Eye, EyeSlash, LockSimple } from "@phosphor-icons/react";
 import { setStudioReduceMotion, studioReducesMotion, subscribeMotion, systemReducesMotion } from "@/lib/motion";
 import { keyFormatError, PROVIDERS, type KeyStatus, type Provider } from "@/lib/provider-keys";
 import { api, remoteEnabled, SyncError } from "@/lib/remote";
-import { useStudio } from "@/lib/store";
+import { refresh, useStudio } from "@/lib/store";
 
 interface Overview {
   permanent: boolean;
@@ -297,7 +297,13 @@ export function Settings() {
       {remoteEnabled ? (
         <>
           <AccountSection data={data} />
-          <KeysSection data={data} onKeys={(keys) => setData((d) => ({ ...d, keys }))} />
+          <KeysSection
+            data={data}
+            onKeys={(keys) => {
+              setData((d) => ({ ...d, keys }));
+              void refresh(); // a saved or removed key moves you on or off the free tier
+            }}
+          />
         </>
       ) : (
         <p className="text-ui text-fg-muted">Accounts aren&rsquo;t set up on this server, so there&rsquo;s no account or provider keys to manage. Everything you make stays in this browser.</p>

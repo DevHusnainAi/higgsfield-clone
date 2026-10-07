@@ -1,7 +1,9 @@
 import { after } from "next/server";
 import { estimateCost, splitBatch } from "@/lib/generation";
-import { parseIntent } from "@/lib/intent";
-import { runGeneration } from "@/lib/server/run-generation";
+import { forTier, parseIntent } from "@/lib/intent";
+import { DEFAULT_TIER, type Tier } from "@/lib/models";
+import { keyStatuses } from "@/lib/server/key-vault";
+import { cloudflareConfigured, runGeneration } from "@/lib/server/run-generation";
 import { accountFrom, admin, RATE_RETRY_AFTER_S, REFERENCES, rateLimited, settleAccount, toGeneration, type GenerationRow } from "@/lib/server/supabase";
 
 // The render runs in after(); this caps it (see RENDER_TIMEOUT_MS).
@@ -17,7 +19,14 @@ async function balanceOf(userId: string): Promise<number> {
   return data as number;
 }
 
-/** Your generations (newest first) and credit balance. */
+/** Free tier: no saved HF key, and Cloudflare is set up to render its images. A saved fal key still runs FLUX. */
+async function tierFor(userId: string): Promise<Tier> {
+  if (!cloudflareConfigured()) return DEFAULT_TIER;
+  const keys = await keyStatuses(userId);
+  return { free: !keys.hf, fal: !!keys.fal };
+}
+
+/** Your generations (newest first), credit balance, and which image models your keys allow. */
 export async function GET(req: Request) {
   if (!admin) return json({ error: "Server is not configured" }, 503);
   const account = await accountFrom(req);
@@ -41,7 +50,12 @@ export async function GET(req: Request) {
   }
 
   // Re-read: the sweep may have refunded stuck runs since settleAccount.
-  return json({ runs: (data as GenerationRow[]).map(toGeneration), balance: sweep.data ? await balanceOf(userId) : balance, swept: sweep.data ?? 0 });
+  return json({
+    runs: (data as GenerationRow[]).map(toGeneration),
+    balance: sweep.data ? await balanceOf(userId) : balance,
+    swept: sweep.data ?? 0,
+    tier: await tierFor(userId),
+  });
 }
 
 /** Start a run of 1-4 outputs. Intent and cost are computed here from the prompt + re-validated overrides. */
@@ -54,7 +68,8 @@ export async function POST(req: Request) {
 
   const body: unknown = await req.json().catch(() => null);
   const { prompt, overrides } = (body ?? {}) as { prompt?: unknown; overrides?: unknown };
-  const intent = parseIntent(prompt, overrides);
+  // The model this tier can actually render, decided here before pricing: the charge always matches the model.
+  const intent = forTier(parseIntent(prompt, overrides), await tierFor(userId));
   if (!intent.prompt) return json({ error: "Prompt is empty" }, 400);
   // parseIntent already limited reference to "<uuid>/<uuid>.<ext>"; it must be in this user's folder and exist.
   if (intent.reference) {

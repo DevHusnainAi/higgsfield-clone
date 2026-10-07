@@ -1,7 +1,7 @@
 // Generation lifecycle: queued -> generating -> done | failed (always refunded).
 // Credits are held at submit, charged only on a real render, refunded on any failure or demo fallback.
 import { DURATION, type AspectRatio, type Intent, type IntentOverrides } from "./intent.ts";
-import { DEFAULT_MODEL, MAX_SEED, MODELS, modelsFor } from "./models.ts";
+import { DEFAULT_MODEL, DEFAULT_TIER, MAX_SEED, MODELS, modelsFor } from "./models.ts";
 
 export type FailureReason = "capacity" | "provider_error" | "timeout" | "cancelled" | "interrupted";
 
@@ -77,7 +77,7 @@ export interface CheaperOption {
 }
 
 /** When the balance can't cover `intent`, the closest affordable variants, most similar first. */
-export function cheaperAlternatives(intent: Intent, balance: number): CheaperOption[] {
+export function cheaperAlternatives(intent: Intent, balance: number, tier = DEFAULT_TIER): CheaperOption[] {
   const options: CheaperOption[] = [];
   const n = countOf(intent);
   const fewer = Math.min(n - 1, Math.floor(balance / unitCost(intent)));
@@ -88,7 +88,7 @@ export function cheaperAlternatives(intent: Intent, balance: number): CheaperOpt
     const secs = Math.min(intent.durationSec - 1, Math.floor(balance / (rateOf(intent) * n)));
     if (secs >= DURATION.min) options.push({ label: `Shorten to ${secs}s`, overrides: { durationSec: secs }, cost: secs * rateOf(intent) * n });
   }
-  const cheaperImage = modelsFor("image")
+  const cheaperImage = modelsFor("image", false, tier)
     .filter(([id, m]) => m.credits * n <= balance && (intent.media === "video" || m.credits < rateOf(intent)) && id !== intent.model)
     .sort(([, a], [, b]) => b.credits - a.credits)[0];
   if (cheaperImage) {
