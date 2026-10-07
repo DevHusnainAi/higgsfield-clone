@@ -18,6 +18,12 @@ Write what you want in plain words: Intent Studio reads the format, camera move,
 ![Supabase](https://img.shields.io/badge/Supabase-Postgres_·_Auth_·_Storage-3ecf8e?logo=supabase&logoColor=white)
 ![Tailwind CSS v4](https://img.shields.io/badge/Tailwind_CSS-v4-38bdf8?logo=tailwindcss&logoColor=white)
 
+<p align="center">
+  <a href="https://intent-studio-five.vercel.app" target="_blank">
+    <img src="https://img.shields.io/badge/🚀_Live_Studio-Try_it_now-f58b4b?style=for-the-badge" alt="Live Demo">
+  </a>
+</p>
+
 <img src="docs/studio.jpg" alt="Intent Studio: a dark workspace with a sidebar, a masonry feed of preset prompts with parsed chips (Video, Dolly in, 9:16, 6s), and a floating prompt composer." width="100%">
 
 </div>
