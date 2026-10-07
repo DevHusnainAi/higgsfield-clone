@@ -175,3 +175,73 @@ test("Google link to an email that already has an account signs in to it (once),
   assert.equal(authorize.length, 1);
   await ctx.close();
 });
+
+test("settings: keys are checked before saving, saved keys show only their last 4, motion switch persists", async () => {
+  const ctx = await context();
+  await ctx.route(`${SUPABASE}/auth/v1/user`, (r) => r.fulfill({ json: MAYA }));
+  let keys: Record<string, { hint: string; updatedAt: string } | null> = { hf: null, fal: null };
+  const puts: string[] = [];
+  await ctx.route("**/api/settings**", async (r) => {
+    if (r.request().method() === "PUT") {
+      const { provider, key } = r.request().postDataJSON() as { provider: string; key: string };
+      puts.push(key);
+      keys = { ...keys, [provider]: { hint: key.slice(-4), updatedAt: new Date().toISOString() } };
+      return r.fulfill({ json: { keys } });
+    }
+    return r.fulfill({ json: { permanent: true, balance: 40, stats: { runs: 12, done: 9, failed: 2, credits_used: 64, credits_refunded: 14 }, keys, byok: true } });
+  });
+  const page = await ctx.newPage();
+  await page.addInitScript(([key, s]) => localStorage.setItem(key, JSON.stringify(s)), [STORAGE_KEY, session(MAYA)] as const);
+  await page.goto(`${BASE}/settings`, { waitUntil: "networkidle" });
+  await page.getByText("Signed in", { exact: true }).waitFor();
+  await page.getByText("40 credits").waitFor();
+  await axe(page, "settings");
+
+  const field = page.getByLabel("Hugging Face HF_TOKEN", { exact: true });
+  assert.equal(await field.getAttribute("type"), "password", "masked by default");
+  await field.fill("sk-not-a-hugging-face-token");
+  await page.getByRole("button", { name: "Save" }).first().click();
+  assert.equal(await page.getByRole("alert").filter({ hasText: "Hugging Face tokens start with hf_." }).count(), 1);
+  assert.equal(puts.length, 0, "a malformed key never leaves the browser");
+  assert.equal(await field.getAttribute("aria-invalid"), "true");
+
+  await page.getByRole("button", { name: "Show key" }).first().click();
+  assert.equal(await field.getAttribute("type"), "text");
+  const token = "hf_" + "Q".repeat(30) + "wxyz";
+  await field.fill(token);
+  await page.getByRole("button", { name: "Save" }).first().click();
+  await page.getByText("Active custom key").waitFor();
+  assert.deepEqual(puts, [token]);
+  assert.equal(await field.inputValue(), "", "the field is cleared once saved");
+  assert.equal(await field.getAttribute("type"), "password", "and masked again");
+  assert.match(await page.locator("body").innerText(), /ending wxyz/);
+  assert.doesNotMatch(await page.content(), new RegExp(token), "the full key isn't left anywhere in the page");
+  await axe(page, "settings, key saved");
+
+  const motion = page.getByRole("switch", { name: "Reduce motion" });
+  assert.equal(await motion.getAttribute("aria-checked"), "false");
+  await motion.click();
+  assert.equal(await page.evaluate(() => document.documentElement.dataset.motion), "reduce");
+  await page.reload({ waitUntil: "networkidle" });
+  assert.equal(await page.evaluate(() => document.documentElement.dataset.motion), "reduce", "applied before paint after a reload");
+  assert.equal(await page.getByRole("switch", { name: "Reduce motion" }).getAttribute("aria-checked"), "true");
+  await ctx.close();
+});
+
+test("settings: guests see their account and the motion switch, but can't save keys", async () => {
+  const ctx = await context({ reducedMotion: "reduce" });
+  await ctx.route("**/api/settings**", (r) =>
+    r.fulfill({ json: { permanent: false, balance: 8, stats: { runs: 0, done: 0, failed: 0, credits_used: 0, credits_refunded: 0 }, keys: { hf: null, fal: null }, byok: true } }),
+  );
+  const page = await ctx.newPage();
+  await page.goto(`${BASE}/settings`, { waitUntil: "networkidle" });
+  await page.getByText("Guest", { exact: true }).waitFor();
+  await page.getByText("8 credits").waitFor();
+  assert.equal(await page.getByText("Sign in to add your own keys.").count(), 2);
+  assert.ok(await page.getByLabel("Hugging Face HF_TOKEN", { exact: true }).isDisabled());
+  const motion = page.getByRole("switch", { name: "Reduce motion" });
+  assert.equal(await motion.getAttribute("aria-checked"), "true", "the system setting shows as on");
+  assert.ok(await motion.isDisabled(), "and can't be turned off here");
+  await axe(page, "settings, guest");
+  await ctx.close();
+});

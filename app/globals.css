@@ -1,5 +1,23 @@
 @import "tailwindcss";
 
+/* motion-safe / motion-reduce also follow the studio's "Reduce motion" switch (<html data-motion="reduce">,
+   lib/motion.ts), which can only ever reduce: system reduce always wins. */
+@custom-variant motion-safe {
+  @media (prefers-reduced-motion: no-preference) {
+    &:where(:root:not([data-motion="reduce"]) *) {
+      @slot;
+    }
+  }
+}
+@custom-variant motion-reduce {
+  @media (prefers-reduced-motion: reduce) {
+    @slot;
+  }
+  &:where(:root[data-motion="reduce"] *) {
+    @slot;
+  }
+}
+
 /* Dark-only carbon system: one cool hue (260) for every neutral, one accent (Ember).
    Depth comes from lightness tiers, hairlines and a lit top edge; no glows.
    Measured WCAG contrast (OKLCH -> sRGB): fg >= 15:1, fg-muted >= 6.7:1, accent-text >= 8.3:1,
@@ -122,6 +140,17 @@
   *,
   ::before,
   ::after {
+    transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, opacity !important;
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+/* The same safety net for the studio's own "Reduce motion" switch (lib/motion.ts). */
+:root[data-motion="reduce"] {
+  scroll-behavior: auto;
+  & *,
+  & ::before,
+  & ::after {
     transition-property: color, background-color, border-color, outline-color, text-decoration-color, fill, stroke, opacity !important;
     animation-duration: 1ms !important;
     animation-iteration-count: 1 !important;

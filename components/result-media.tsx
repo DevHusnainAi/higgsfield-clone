@@ -1,12 +1,12 @@
 import Image from "next/image";
 import type { SyntheticEvent } from "react";
+import { reducedMotion } from "@/lib/motion";
 
 export const isVideo = (url: string) => /\.(mp4|webm)$/i.test(new URL(url).pathname);
 
-const motionOk = () => !matchMedia("(prefers-reduced-motion: reduce)").matches;
 const videoIn = (e: SyntheticEvent<HTMLElement>) => e.currentTarget.querySelector("video");
 const play = (e: SyntheticEvent<HTMLElement>) => {
-  if (motionOk()) void videoIn(e)?.play().catch(() => {}); // play() rejects if interrupted by a quick pause; harmless
+  if (!reducedMotion()) void videoIn(e)?.play().catch(() => {}); // play() rejects if interrupted by a quick pause; harmless
 };
 const pause = (e: SyntheticEvent<HTMLElement>) => videoIn(e)?.pause();
 

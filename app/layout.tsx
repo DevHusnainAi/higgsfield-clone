@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { MOTION_SCRIPT } from "@/lib/motion";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -27,10 +28,15 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
+    // suppressHydrationWarning: MOTION_SCRIPT may set data-motion on <html> before React hydrates.
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: MOTION_SCRIPT }} />
+      </head>
       <body className="min-h-[100dvh] font-sans text-ui">{children}</body>
     </html>
   );

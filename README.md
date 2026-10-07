@@ -68,6 +68,7 @@ Intent Studio is built around the opposite promises:
 | **Image-to-video** | Attach a start frame from your private library (10 frames, 5 MB each). |
 | **Studio workspace** | Masonry feed of presets, stage + inspector for each run, library with filters and favorites, remix, keyboard shortcuts (`/`, `⌘/Ctrl ↵`). |
 | **Accounts** | Try instantly as a guest (8 credits). Sign in with Google or a magic link to keep your history everywhere and get 40 credits. While you wait for the email, the screen completes by itself the moment the link is opened in another tab. Sign-in opens as a modal over the studio, or as a full split page on a direct visit, with Iris, a creature that follows your cursor and watches for your sign-in. |
+| **Settings** | Account summary with lifetime usage, your own Hugging Face or fal.ai key (encrypted, never sent back to the browser), and a Reduce motion switch that applies before first paint. |
 | **Dev console** | A live, read-only stream of the pipeline: parsed intent, request latency, credit lock timing, state changes. |
 
 <img src="docs/run.jpg" alt="A finished run on the dark stage with the run inspector beside it: prompt, model, format, aspect ratio, seed, guidance, credits charged, start time and duration." width="100%">
@@ -185,6 +186,7 @@ sequenceDiagram
 | Request flooding | 15 writes / 10 min per user **and** per IP, stored in Postgres, fails closed, `429` + `Retry-After` | `rate_limit_hit` |
 | Storage exhaustion | Private image-only bucket, 5 MB, an 11th file per folder rejected under a per-folder lock | `…_storage_limits.sql` |
 | SSRF via start frames | Path-only contract `<uuid>/<uuid>.(png\|jpg\|webp)`, owner-folder check, bytes sent to the provider, never URLs | `lib/intent.ts`, render worker |
+| Leaked provider keys (BYOK) | AES-256-GCM with the key in `BYOK_ENCRYPTION_KEY` (server only); ciphertext bound to user and provider; table closed to browser roles, even for its owner; only the last 4 characters are ever returned; format checked on the server | `lib/server/key-vault.ts`, `…_settings.sql` |
 | Wrong server key | A publishable/anon key in `SUPABASE_SECRET_KEY` is refused at startup | `lib/server/supabase.ts` |
 | Secret leakage | `SUPABASE_SECRET_KEY`, `HF_TOKEN`, `FAL_KEY` have no `NEXT_PUBLIC_` prefix and are used only in `lib/server/*` | |
 
@@ -192,7 +194,7 @@ sequenceDiagram
 
 | Situation | Behaviour |
 |---|---|
-| Provider out of credit (**HTTP 402**) | Optional demo fallback: the run completes with a clearly labelled stock asset, **refunded in the same statement**, plus a toast. Only 402 triggers it; set `DEMO_FALLBACK=off` to fail and refund instead. |
+| Provider out of credit (**HTTP 402**) | Optional demo fallback: the run completes with a clearly labelled stock asset, **refunded in the same statement**, plus a toast. Only 402 on the studio's shared key triggers it; on a user's own key it fails and refunds. Set `DEMO_FALLBACK=off` to always fail and refund. |
 | Provider slow or hung | 270s render timeout inside the route's 300s `maxDuration`, then `timeout`, refunded |
 | Worker dies mid-render | The stale sweep refunds it on the next history fetch |
 | User cancels | Settled and refunded first, then the render is aborted; a late result is discarded |
@@ -238,6 +240,7 @@ Node.js **22.18+** is required (the tests run TypeScript directly with Node's ty
 | `SUPABASE_SECRET_KEY` | with the URL | **server only** | same page, *secret* key | A publishable key here is refused at startup |
 | `HF_TOKEN` | for real renders | **server only** | Hugging Face → Access Tokens (fine-grained, *Make calls to Inference Providers*) | Enough for every model |
 | `FAL_KEY` | optional | **server only** | fal.ai dashboard | FLUX and Wan then bill to fal instead of HF |
+| `BYOK_ENCRYPTION_KEY` | optional | **server only** | `openssl rand -base64 32` | Enables saving your own keys in Settings. Changing it makes saved keys unreadable |
 | `DEMO_FALLBACK` | optional | **server only** | | `off` = a provider 402 fails and refunds |
 | `NEXT_PUBLIC_EMAIL_CODES` | optional | browser | | `on` = offer 6-digit code entry; only after adding `{{ .Token }}` to the email templates |
 
@@ -265,10 +268,11 @@ npm run build
 | `lib/db.test.ts` | Applies the **real migrations** to PGlite (Postgres in WASM) with stubbed Supabase schemas. Holds, exactly-once settlement, the status/credit constraint, the stale sweep, batches, the active-run cap, rate limits, storage policies and quota, the 402 fallback refund, RLS for cross-user reads/writes/RPCs, the 8/40 grants, and history-only merges (run as `service_role`, which can't read `auth.users`, as on hosted Supabase). No Docker, no network. |
 | `lib/logic.test.ts` | Parser detection, negation and clamping, the override trust boundary, start-frame path allow-list against URL/traversal/`file://` payloads, remix, cheaper alternatives, batch pricing, state-machine invariants. |
 | `lib/remote.test.ts` | Every "that account already exists" answer from a Google link is recognised and switches to sign-in. |
+| `lib/byok.test.ts` | Key encryption round-trips with a fresh IV; a ciphertext won't open for another user, provider or key, or after tampering; key format checks; own keys are used before shared ones. |
 | `lib/store.test.ts` | Cached history is kept only for the account that owns it. |
 | `lib/gaze.test.ts` | Gaze stays inside the eye; smoothing is identical at 60Hz and 120Hz; the paw spring overshoots ~4% and settles in under 0.4s. |
 | `lib/supabase-key.test.ts` | Only a service-role key is accepted as the server key. |
-| `e2e/auth.test.ts` | Sign-in with Supabase mocked at the network layer: axe on the page and the modal in both states, link-only by default, Google's branding values, the waiting state completing when another tab opens the link, Iris watching the radar, and reduced motion. Needs a server built with `NEXT_PUBLIC_SUPABASE_URL=https://fake.supabase.test NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_test`, then `npm run test:auth`. |
+| `e2e/auth.test.ts` | Sign-in with Supabase mocked at the network layer: axe on the page and the modal in both states, link-only by default, Google's branding values, the waiting state completing when another tab opens the link, Iris watching the radar, reduced motion, and Settings (keys checked before saving, only the last 4 shown, the guest lock, the motion switch surviving a reload). Needs a server built with `NEXT_PUBLIC_SUPABASE_URL=https://fake.supabase.test NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_test`, then `npm run test:auth`. |
 | `e2e/a11y.test.ts` | axe-core, WCAG 2.2 AA, in Chromium. Runs against a local-mode server so it can't write to a live project: |
 
 ```bash
@@ -286,6 +290,8 @@ app/
   api/generations/route.ts       GET history + balance · POST start (auth, rate limit, re-parse, re-price, RPC)
   api/generations/[id]/cancel/   owner-scoped cancel
   api/account/merge/             guest history → signed-in account (history only)
+  api/settings/                  account summary + usage; save/remove your own provider keys
+  (studio)/settings/             settings page, inside the studio shell
   (studio)/@modal/(.)sign-in/    in-app navigation to /sign-in, intercepted into a modal over the studio
   (auth)/sign-in/                direct load or refresh of /sign-in: the full split page (no guest session)
   (legal)/                       privacy policy and terms
@@ -300,7 +306,9 @@ lib/
   dev-log.ts                     dev console event stream
   gaze.ts                        Iris's motion maths: gaze vector, frame-rate independent smoothing, damped spring
   remote.ts                      Supabase session, sign-in flows, authenticated fetch, start-frame storage
-  server/                        service-role client, token checks, rate limiter, render worker
+  provider-keys.ts               bring-your-own-key providers and key formats (client + server)
+  motion.ts                      Reduce motion: system setting or the studio switch
+  server/                        service-role client, token checks, rate limiter, render worker, key vault
 supabase/migrations/             schema, RPCs, RLS, storage policies, quotas, accounts (applied in order)
 public/presets/                  preset photos, pre-sized 640px WebP served as static files
 e2e/                             accessibility and sign-in suites
@@ -313,6 +321,7 @@ e2e/                             accessibility and sign-in suites
 - **Polling, not push.** The client polls every 2s while runs are active; Supabase Realtime is the natural upgrade.
 - **Cancel is best-effort at the provider.** Credits are refunded immediately, but aborting the HTTP call only works within the same server instance; a queue would decouple rendering from the request.
 - **The per-IP limit trusts the first `x-forwarded-for` hop**, which is correct behind Vercel.
+- **Saved keys are format-checked, not tried.** A revoked or out-of-credit key shows up as a provider error on the next run (refunded), not when it's saved. Credits still apply to runs on your own key.
 - **The rate card is a mock.** Real billing would derive credits from provider pricing and add purchases; the ledger doesn't change.
 
 ## License and credits
